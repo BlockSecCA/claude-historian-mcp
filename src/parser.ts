@@ -47,7 +47,7 @@ export class ConversationParser {
             uuid: claudeMessage.uuid,
             timestamp: formatTimestamp(claudeMessage.timestamp),
             type: claudeMessage.type,
-            content: this.smartContentPreservation(content, 3000), // Smart content extraction with more space
+            content: this.smartContentPreservation(content, this.getContentLimit(content)), // Adaptive limit based on content type
             sessionId: claudeMessage.sessionId,
             projectPath: decodeProjectPath(projectDir),
             relevanceScore: query ? calculateRelevanceScore(claudeMessage, query, projectDir) : 0,
@@ -111,12 +111,29 @@ export class ConversationParser {
 
       toolContent
         .filter((item) => item && item.type === 'tool_use' && item.name)
-        .map((item) => item.name)
-        .filter(Boolean)
-        .forEach((tool) => {
-          // Clean up tool names (remove mcp__ prefixes, extract core name)
-          const cleanName = tool.replace(/^mcp__.*?__/, '').replace(/[_-]/g, '');
+        .forEach((item) => {
+          // Extract tool name
+          const cleanName = item.name.replace(/^mcp__.*?__/, '').replace(/[_-]/g, '');
           if (cleanName) tools.add(cleanName);
+
+          // Extract file paths from tool parameters
+          if (item.input) {
+            const input = item.input as any;
+            // Check common file path parameter names
+            const filePath = input.file_path || input.filepath || input.path || input.notebook_path;
+            if (filePath && typeof filePath === 'string') {
+              files.add(filePath);
+            }
+            // For tools that work with patterns or globs
+            if (input.pattern && typeof input.pattern === 'string' && input.pattern.includes('/')) {
+              files.add(input.pattern);
+            }
+            // Extract bash commands for tool pattern analysis
+            if (input.command && typeof input.command === 'string') {
+              if (!context.bashCommands) context.bashCommands = [];
+              context.bashCommands.push(input.command.substring(0, 100));
+            }
+          }
         });
     }
 
@@ -131,6 +148,23 @@ export class ConversationParser {
         .forEach((item) => {
           const cleanName = item.name.replace(/^mcp__.*?__/, '').replace(/[_-]/g, '');
           if (cleanName) tools.add(cleanName);
+
+          // Extract file paths from tool parameters
+          if (item.input) {
+            const input = item.input as any;
+            const filePath = input.file_path || input.filepath || input.path || input.notebook_path;
+            if (filePath && typeof filePath === 'string') {
+              files.add(filePath);
+            }
+            if (input.pattern && typeof input.pattern === 'string' && input.pattern.includes('/')) {
+              files.add(input.pattern);
+            }
+            // Extract bash commands for tool pattern analysis
+            if (input.command && typeof input.command === 'string') {
+              if (!context.bashCommands) context.bashCommands = [];
+              context.bashCommands.push(input.command.substring(0, 100));
+            }
+          }
         });
     }
 
@@ -164,13 +198,24 @@ export class ConversationParser {
       context.toolsUsed = Array.from(tools);
     }
 
-    // Extract error patterns
+    // Extract error patterns - broadened to capture common Unix/Node/JS errors
     const errorPatterns = [
       /error[:\s]+([^\n]+)/gi,
       /failed[:\s]+([^\n]+)/gi,
       /exception[:\s]+([^\n]+)/gi,
       /cannot[:\s]+([^\n]+)/gi,
       /unable to[:\s]+([^\n]+)/gi,
+      // Unix/Node system errors (without prefix requirement)
+      /(ENOENT|EACCES|ETIMEDOUT|ECONNREFUSED|EPERM|EEXIST|ENOTDIR|EISDIR)[:\s]+([^\n]+)/gi,
+      // JavaScript error types
+      /(TypeError|ReferenceError|SyntaxError|RangeError|URIError)[:\s]+([^\n]+)/gi,
+      // Common error phrases without prefix
+      /permission denied[:\s]*([^\n]*)/gi,
+      /connection refused[:\s]*([^\n]*)/gi,
+      /module not found[:\s]*([^\n]*)/gi,
+      /command not found[:\s]*([^\n]*)/gi,
+      /no such file[:\s]*([^\n]*)/gi,
+      /not found[:\s]*([^\n]*)/gi,
     ];
 
     const errors = new Set<string>();
@@ -206,6 +251,21 @@ export class ConversationParser {
     }
 
     return Object.keys(context).length > 0 ? context : undefined;
+  }
+
+  // Adaptive content limit based on content type - more space for code/technical content
+  private getContentLimit(content: string): number {
+    const contentType = this.detectContentType(content);
+    switch (contentType) {
+      case 'code':
+        return 4000; // More space for code blocks
+      case 'error':
+        return 3500; // Errors need full context
+      case 'technical':
+        return 3500;
+      default:
+        return 3000;
+    }
   }
 
   public smartContentPreservation(content: string, maxLength: number): string {
@@ -393,22 +453,22 @@ export class ConversationParser {
     return insights.slice(0, 3); // Top 3 most valuable insights
   }
 
-  // Extract code snippets with context
+  // Extract code snippets with context - balanced limit for actionable content
   private extractCodeSnippets(content: string): string[] {
     const snippets: string[] = [];
-    
-    // Extract code blocks
+
+    // Extract code blocks - preserve more context (400 chars balanced)
     const codeBlockRegex = /```[\w]*\n([\s\S]*?)\n```/g;
     let match: RegExpExecArray | null;
     while ((match = codeBlockRegex.exec(content)) !== null) {
       if (match[1] && match[1].trim().length > 10) {
         const snippet = match[1].trim();
-        snippets.push(snippet.length > 100 ? snippet.substring(0, 100) + '...' : snippet);
+        snippets.push(snippet.length > 400 ? snippet.substring(0, 400) + '...' : snippet);
       }
     }
 
     // Extract inline code with context
-    const inlineCodeRegex = /`([^`]{10,80})`/g;
+    const inlineCodeRegex = /`([^`]{10,120})`/g;
     let inlineMatch: RegExpExecArray | null;
     while ((inlineMatch = inlineCodeRegex.exec(content)) !== null) {
       if (inlineMatch?.[1] && !snippets.some(s => s.includes(inlineMatch![1]))) {
@@ -416,7 +476,7 @@ export class ConversationParser {
       }
     }
 
-    return snippets.slice(0, 3); // Top 3 code snippets
+    return snippets.slice(0, 5); // Top 5 code snippets for better coverage
   }
 
   // Extract actionable items and next steps

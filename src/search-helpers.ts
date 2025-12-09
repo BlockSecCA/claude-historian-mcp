@@ -166,6 +166,17 @@ export class SearchHelpers {
 
     if (words1.length === 0 || words2.length === 0) return 0;
 
+    // Stop words that shouldn't count toward similarity
+    const stopWords = new Set([
+      'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has',
+      'how', 'what', 'when', 'where', 'why', 'can', 'could', 'would', 'should',
+      'want', 'need', 'help', 'please', 'just', 'like', 'some', 'any', 'all'
+    ]);
+
+    // Filter out stop words for significant word matching
+    const significant1 = words1.filter(w => w.length >= 4 && !stopWords.has(w));
+    const significant2 = words2.filter(w => w.length >= 4 && !stopWords.has(w));
+
     // Enhanced semantic matching with technical term awareness
     const technicalSynonyms: Record<string, string[]> = {
       'error': ['exception', 'fail', 'crash', 'bug', 'issue', 'problem'],
@@ -178,6 +189,7 @@ export class SearchHelpers {
     };
 
     let totalScore = 0;
+    let significantMatches = 0;
     const maxWords = Math.max(words1.length, words2.length);
     const minWords = Math.min(words1.length, words2.length);
     const matched2 = new Set<number>();
@@ -186,19 +198,26 @@ export class SearchHelpers {
       const word1 = words1[i];
       let bestMatch = 0;
       let bestIndex = -1;
+      const isSignificant1 = significant1.includes(word1);
 
       for (let j = 0; j < words2.length; j++) {
         if (matched2.has(j)) continue;
 
         const word2 = words2[j];
+        const isSignificant2 = significant2.includes(word2);
         let matchScore = 0;
 
         if (word1 === word2) {
           matchScore = 1.0;
+          if (isSignificant1 && isSignificant2) significantMatches++;
         } else if (word1.includes(word2) || word2.includes(word1)) {
           const shorter = Math.min(word1.length, word2.length);
           const longer = Math.max(word1.length, word2.length);
-          matchScore = 0.8 * (shorter / longer);
+          // Require 5+ char prefix AND word length similarity for partial matches
+          if (shorter >= 5 && (shorter / longer) >= 0.6) {
+            matchScore = 0.8 * (shorter / longer);
+            if (isSignificant1 && isSignificant2) significantMatches++;
+          }
         } else if (this.isWordSimilar(word1, word2)) {
           matchScore = 0.6;
         } else {
@@ -208,6 +227,7 @@ export class SearchHelpers {
                 (key === word2 && synonyms.includes(word1)) ||
                 (synonyms.includes(word1) && synonyms.includes(word2))) {
               matchScore = 0.7;
+              if (isSignificant1 && isSignificant2) significantMatches++;
               break;
             }
           }
@@ -225,13 +245,27 @@ export class SearchHelpers {
       }
     }
 
+    // CRITICAL: Require at least 2 significant word matches for semantic relevance
+    // This prevents "write unit tests" matching "test sidekick" (only 1 word overlap)
+    if (significantMatches < 2 && significant1.length >= 2 && significant2.length >= 2) {
+      return 0;  // Not enough semantic overlap
+    }
+
+    // Add stemming bonus for better recall
+    const stem = (word: string) => word.replace(/(ing|ed|s|ly|tion|ment)$/, '');
+    const stemmed1 = words1.map(stem);
+    const stemmed2 = words2.map(stem);
+    const stemmedIntersection = stemmed1.filter(w => stemmed2.includes(w));
+    const stemBonus = (stemmedIntersection.length / Math.max(stemmed1.length, stemmed2.length)) * 0.3;
+
     // Boost score for technical queries
     const isTechnical = words1.some(w => ['error', 'fix', 'build', 'install', 'typescript', 'javascript'].includes(w)) ||
                        words2.some(w => ['error', 'fix', 'build', 'install', 'typescript', 'javascript'].includes(w));
     const technicalBoost = isTechnical ? 1.2 : 1.0;
 
     const lengthPenalty = minWords / maxWords;
-    return Math.min((totalScore / maxWords) * lengthPenalty * technicalBoost, 1.0);
+    const baseScore = (totalScore / maxWords) * lengthPenalty * technicalBoost;
+    return Math.min(baseScore + stemBonus, 1.0);
   }
 
   static hasExactKeywords(query1: string, query2: string): boolean {
@@ -266,6 +300,25 @@ export class SearchHelpers {
     );
 
     return hasTechMatch || sharedKeywords.length >= 2 || sharedKeywords.some((k) => k.length > 6);
+  }
+
+  // Add partial keyword matching for better recall
+  static hasPartialKeywords(query1: string, query2: string): boolean {
+    const words1 = query1.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const words2 = query2.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+    // Check for partial matches (word prefix matching)
+    for (const w1 of words1) {
+      for (const w2 of words2) {
+        // At least 4 chars matching at start
+        if (w1.length >= 4 && w2.length >= 4) {
+          if (w1.startsWith(w2.substring(0, 4)) || w2.startsWith(w1.substring(0, 4))) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   static isWordSimilar(word1: string, word2: string): boolean {
@@ -342,32 +395,49 @@ export class SearchHelpers {
 
   static hasErrorInContent(content: string, errorPattern: string): boolean {
     const lowerContent = content.toLowerCase();
-    const lowerPattern = errorPattern.toLowerCase();
+    // Strip punctuation from pattern to handle "npm ERR!", "Error:", etc.
+    const lowerPattern = errorPattern.toLowerCase().replace(/[!?.:]+/g, '').trim();
 
+    // Direct phrase match is best - ALWAYS check this first
     if (lowerContent.includes(lowerPattern)) return true;
 
-    // Enhanced error pattern matching with fuzzy matching
-    const errorKeywords = [
-      'error:',
-      'failed:',
-      'exception:',
-      'cannot',
-      'unable to',
-      'not found',
-      'permission denied',
-      'typeerror',
-      'referenceerror', 
-      'syntaxerror',
-      'module not found',
-      'compilation error'
+    // For specific error codes (ENOENT, TypeError, etc), require the ACTUAL code to appear
+    // Don't match generic "error" content
+    const specificErrorCodes = [
+      'enoent', 'eacces', 'etimedout', 'econnrefused', 'eperm', 'eexist',
+      'enotdir', 'eisdir', 'eaddrinuse', 'econnreset', 'ehostunreach',
+      'typeerror', 'referenceerror', 'syntaxerror', 'rangeerror', 'urierror'
     ];
-    
-    // Extract key words from error pattern for fuzzy matching
+
+    // If the pattern is a specific error code, require that EXACT code to be in content
+    const patternIsSpecificCode = specificErrorCodes.some(code => lowerPattern.includes(code));
+    if (patternIsSpecificCode) {
+      // Must match the specific error code, not just generic "error" content
+      return specificErrorCodes.some(code => lowerPattern.includes(code) && lowerContent.includes(code));
+    }
+
+    // For phrase patterns like "connection refused", require the phrase
     const patternWords = lowerPattern.split(/[\s:_-]+/).filter(w => w.length > 2);
-    
-    return errorKeywords.some(
-      (keyword) =>
-        lowerContent.includes(keyword) && patternWords.some(word => lowerContent.includes(word))
-    );
+    if (patternWords.length === 0) return false;
+
+    // Common error phrases - must match the WHOLE phrase, not individual words
+    const errorPhrases = [
+      'connection refused', 'permission denied', 'no such file', 'not found',
+      'module not found', 'command not found', 'cannot read', 'cannot find',
+      'is not a function', 'is not defined', 'undefined is not', 'null is not',
+      'build failed', 'compile error', 'test failed', 'npm err', 'yarn error',
+      'exit code', 'stack trace', 'uncaught exception', 'unhandled rejection'
+    ];
+
+    // If pattern matches a known error phrase, require that phrase in content
+    for (const phrase of errorPhrases) {
+      if (lowerPattern.includes(phrase.split(' ')[0]) && phrase.split(' ').length > 1) {
+        if (lowerContent.includes(phrase)) return true;
+      }
+    }
+
+    // For other patterns, require 2+ words to match (not just 1)
+    const matchCount = patternWords.filter(word => lowerContent.includes(word)).length;
+    return matchCount >= Math.min(2, patternWords.length);
   }
 }

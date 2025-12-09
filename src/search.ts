@@ -126,8 +126,8 @@ export class HistorySearchEngine {
       );
 
       // Quality gate: Only return results that meet minimum value threshold
-      const qualityResults = topRelevant.filter(msg => 
-        (msg.relevanceScore || 0) >= 1.5 && // Must be reasonably relevant
+      const qualityResults = topRelevant.filter(msg =>
+        (msg.finalScore || msg.relevanceScore || 0) >= 1.5 && // Must be reasonably relevant (use finalScore with query boosting)
         msg.content.length >= 40 && // Must have substantial content
         !this.isLowValueContent(msg.content) // Must not be filler
       );
@@ -221,7 +221,7 @@ export class HistorySearchEngine {
   private isHighlyRelevant(message: CompactMessage, query: string, analysis: any): boolean {
     const content = message.content.toLowerCase();
     
-    // Eliminate all noise patterns aggressively
+    // Eliminate all noise patterns aggressively - expanded to catch Claude system messages
     const noisePatterns = [
       'this session is being continued',
       'caveat:',
@@ -231,15 +231,26 @@ export class HistorySearchEngine {
       'command-message>',
       'much better! now i can see',
       'package.js',
-      'export interface'
+      'export interface',
+      // Claude system/intro messages that shouldn't match searches
+      'you are claude code',
+      'read-only mode',
+      'i cannot make changes',
+      "i'm in plan mode",
+      "hello! i'm claude",
+      'i am claude',
+      'ready to help you',
+      'what would you like me to',
+      'how can i assist',
+      'i understand that i\'m',
     ];
-    
+
     if (noisePatterns.some(pattern => content.includes(pattern)) || content.length < 40) {
       return false;
     }
-    
-    // Must have reasonable relevance score  
-    if ((message.relevanceScore || 0) < 1) return false;
+
+    // Must have reasonable relevance score - lowered from 1 to 0.3 to allow more candidates through
+    if ((message.relevanceScore || 0) < 0.3) return false;
     
     // Must match query intent
     return this.matchesQueryIntent(message, analysis);
@@ -278,14 +289,31 @@ export class HistorySearchEngine {
     // Enhanced scoring with semantic boosts
     const scoredCandidates = candidates.map(msg => {
       let score = msg.relevanceScore || 0;
-      
+      const contentLower = msg.content.toLowerCase();
+      const queryTerms = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+      // Heavy multiplicative boost for exact query term matches
+      let exactMatchBoost = 1.0;
+      for (const term of queryTerms) {
+        if (contentLower.includes(term)) {
+          exactMatchBoost *= 3.0; // Each matching term triples relevance
+        }
+      }
+      score *= exactMatchBoost;
+
+      // Penalize results that don't match ANY query terms - additive penalty instead of multiplicative
+      if (exactMatchBoost === 1.0 && queryTerms.length > 0) {
+        score -= 2;  // Additive penalty, not multiplicative
+        if (score < 0.5) score = 0.5;  // Floor at 0.5 to allow some through
+      }
+
       // Apply semantic boosts from analysis
       Object.entries(analysis.semanticBoosts).forEach(([type, boost]) => {
         if (this.messageMatchesSemanticType(msg, type)) {
           score *= (boost as number);
         }
       });
-      
+
       // Recency boost for time-sensitive queries
       if (analysis.urgency === 'high') {
         const timestamp = new Date(msg.timestamp);
@@ -293,7 +321,7 @@ export class HistorySearchEngine {
         const hoursDiff = (now.getTime() - timestamp.getTime()) / (1000 * 60 * 60);
         if (hoursDiff < 24) score *= 1.5;
       }
-      
+
       return { ...msg, finalScore: score };
     });
     
@@ -806,11 +834,27 @@ export class HistorySearchEngine {
                      !this.isLowValueContent(msg.content) // Only quality queries
           );
 
-          for (const query of userQueries) {
+          for (let i = 0; i < userQueries.length; i++) {
+            const query = userQueries[i];
             const similarity = SearchHelpers.calculateQuerySimilarity(targetQuery, query.content);
-            // Lowered threshold from 0.3 to 0.1 and added partial matching
-            if (similarity > 0.2 || SearchHelpers.hasExactKeywords(targetQuery, query.content)) {
+            // Raised threshold to 0.4 and REMOVED partial keyword fallback (causes false positives)
+            if (similarity > 0.4) {
               query.relevanceScore = similarity;
+
+              // Find the answer - look for next assistant message in original array
+              const queryIndex = messages.findIndex(m => m.uuid === query.uuid);
+              if (queryIndex >= 0) {
+                // Look ahead for assistant response (may not be immediately next)
+                for (let j = queryIndex + 1; j < Math.min(queryIndex + 5, messages.length); j++) {
+                  const nextMsg = messages[j];
+                  if (nextMsg.type === 'assistant' && nextMsg.content.length > 50) {
+                    query.context = query.context || {};
+                    query.context.claudeInsights = [nextMsg.content.substring(0, 400)];
+                    break;
+                  }
+                }
+              }
+
               allMessages.push(query);
             }
           }
@@ -864,13 +908,41 @@ export class HistorySearchEngine {
               for (let i = 0; i < messages.length - 1; i++) {
                 const current = messages[i];
 
+                // More precise error matching - require significant overlap
+                const lowerPattern = errorPattern.toLowerCase();
+                const patternWords = lowerPattern.split(/\s+/).filter(w => w.length > 2);
+
+                // Extract error type if present (TypeError, SyntaxError, etc.)
+                const errorType = lowerPattern.match(/(typeerror|syntaxerror|referenceerror|rangeerror|error)/)?.[0];
+
+                const hasMatchingError = current.context?.errorPatterns?.some((err) => {
+                  const lowerErr = err.toLowerCase();
+
+                  // Require error type to match if specified
+                  if (errorType && !lowerErr.includes(errorType)) {
+                    return false;
+                  }
+
+                  // Require at least 3 pattern words to match, or full phrase match (stricter)
+                  if (lowerErr.includes(lowerPattern)) return true;
+                  const matchCount = patternWords.filter(w => lowerErr.includes(w)).length;
+                  return matchCount >= Math.min(3, patternWords.length);
+                });
+
+                // Only include if it's an actual error (not meta-discussion about errors)
+                const isActualErrorContent = this.isActualError(current.content);
+
+                // Filter out meta-content (plans, benchmarks, discussions)
                 if (
-                  current.context?.errorPatterns?.some((err) =>
-                    err.toLowerCase().includes(errorPattern.toLowerCase())
-                  ) ||
-                  SearchHelpers.hasErrorInContent(current.content, errorPattern)
+                  (hasMatchingError || SearchHelpers.hasErrorInContent(current.content, errorPattern)) &&
+                  isActualErrorContent &&
+                  !this.isMetaErrorContent(current.content)
                 ) {
-                  const errorKey = current.context?.errorPatterns?.[0] || errorPattern;
+                  // Use the most relevant error pattern as key
+                  const matchedError = current.context?.errorPatterns?.find(err =>
+                    err.toLowerCase().includes(lowerPattern)
+                  ) || current.context?.errorPatterns?.[0] || errorPattern;
+                  const errorKey = matchedError;
 
                   if (!projectErrorMap.has(errorKey)) {
                     projectErrorMap.set(errorKey, []);
@@ -878,9 +950,9 @@ export class HistorySearchEngine {
 
                   // Include the error message and the next few messages as potential solutions
                   const solutionMessages = messages
-                    .slice(i, i + 5) // Get more context for better solutions
-                    .filter((msg) => 
-                      msg.type === 'assistant' || 
+                    .slice(i, i + 8) // Get more context for better solutions (increased from 5 to 8)
+                    .filter((msg) =>
+                      msg.type === 'assistant' ||
                       msg.type === 'tool_result' ||
                       (msg.type === 'user' && msg.content.length < 200) // Include short user clarifications
                     );
@@ -910,17 +982,18 @@ export class HistorySearchEngine {
 
       // Convert to ErrorSolution format
       for (const [pattern, msgs] of errorMap.entries()) {
-        // Only include solutions with substantial, actionable content
-        const qualitySolutions = msgs.filter(msg => 
-          !this.isLowValueContent(msg.content) && 
-          msg.content.length >= 60 && // Must be substantial
-          (msg.content.includes('solution') || msg.content.includes('fix') || msg.content.includes('resolved'))
+        // Assistant responses following errors are solutions by context
+        // Lower threshold from 50 to 20 chars for actionable short solutions
+        const qualitySolutions = msgs.filter(msg =>
+          msg.type === 'assistant' &&
+          !this.isLowValueContent(msg.content) &&
+          msg.content.length >= 20
         );
-        
+
         if (qualitySolutions.length > 0) {
           solutions.push({
             errorPattern: pattern,
-            solution: qualitySolutions.slice(0, 3),
+            solution: qualitySolutions.slice(0, 5), // Include up to 5 solutions (increased from 3)
             context: SearchHelpers.extractSolutionContext(qualitySolutions),
             frequency: msgs.length,
           });
@@ -963,8 +1036,13 @@ export class HistorySearchEngine {
               for (const msg of messages) {
                 if (msg.context?.toolsUsed?.length) {
                   for (const tool of msg.context.toolsUsed) {
-                    // Only track core tools to match GLOBAL's focus
-                    if (coreTools.has(tool) || !toolName || tool === toolName) {
+                    // If toolName specified, only track that tool
+                    // Otherwise, track all core tools
+                    const shouldTrack = toolName
+                      ? tool === toolName
+                      : coreTools.has(tool);
+
+                    if (shouldTrack) {
                       if (!projectToolMap.has(tool)) {
                         projectToolMap.set(tool, []);
                       }
@@ -978,14 +1056,18 @@ export class HistorySearchEngine {
               for (let i = 0; i < messages.length - 1; i++) {
                 const current = messages[i];
                 const next = messages[i + 1];
-                
+
                 if (current.context?.toolsUsed?.length && next.context?.toolsUsed?.length) {
-                  // Create focused workflow patterns like GLOBAL: "Edit → Read"
+                  // Create focused workflow patterns
                   for (const currentTool of current.context.toolsUsed) {
                     for (const nextTool of next.context.toolsUsed) {
-                      // Only create workflows with core tools
-                      if ((coreTools.has(currentTool) || !toolName || currentTool === toolName) &&
-                          (coreTools.has(nextTool) || !toolName || nextTool === toolName)) {
+                      // If toolName specified, workflow must involve that tool
+                      // Otherwise, workflows between core tools
+                      const shouldTrack = toolName
+                        ? (currentTool === toolName || nextTool === toolName)
+                        : (coreTools.has(currentTool) && coreTools.has(nextTool));
+
+                      if (shouldTrack) {
                         const workflowKey = `${currentTool} → ${nextTool}`;
                         if (!projectWorkflowMap.has(workflowKey)) {
                           projectWorkflowMap.set(workflowKey, []);
@@ -1002,16 +1084,20 @@ export class HistorySearchEngine {
                 const first = messages[i];
                 const second = messages[i + 1];
                 const third = messages[i + 2];
-                
-                if (first.context?.toolsUsed?.length && 
-                    second.context?.toolsUsed?.length && 
+
+                if (first.context?.toolsUsed?.length &&
+                    second.context?.toolsUsed?.length &&
                     third.context?.toolsUsed?.length) {
-                  
+
                   for (const firstTool of first.context.toolsUsed) {
                     for (const secondTool of second.context.toolsUsed) {
                       for (const thirdTool of third.context.toolsUsed) {
-                        // Create 3-step workflows like "Edit → Read → findtoolpatterns"
-                        if (coreTools.has(firstTool) && coreTools.has(secondTool)) {
+                        // If toolName specified, 3-step workflow must involve that tool
+                        const shouldTrack = toolName
+                          ? (firstTool === toolName || secondTool === toolName || thirdTool === toolName)
+                          : (coreTools.has(firstTool) && coreTools.has(secondTool) && coreTools.has(thirdTool));
+
+                        if (shouldTrack) {
                           const workflowKey = `${firstTool} → ${secondTool} → ${thirdTool}`;
                           if (!projectWorkflowMap.has(workflowKey)) {
                             projectWorkflowMap.set(workflowKey, []);
@@ -1066,11 +1152,16 @@ export class HistorySearchEngine {
       for (const [tool, messages] of Array.from(toolMap.entries()).sort((a, b) => b[1].length - a[1].length)) {
         if (messages.length >= 1 && !usedTools.has(tool) && patterns.length < limit) {
           const uniqueMessages = SearchHelpers.deduplicateByContent(messages);
+
+          // Extract actual patterns and practices instead of generic text
+          const actualPatterns = this.extractActualToolPatterns(tool, uniqueMessages);
+          const actualPractices = this.extractActualBestPractices(tool, uniqueMessages);
+
           patterns.push({
             toolName: tool,
             successfulUsages: uniqueMessages.slice(0, 10),
-            commonPatterns: [`${tool} usage pattern`],
-            bestPractices: [`${tool} used ${uniqueMessages.length}x successfully`],
+            commonPatterns: actualPatterns.length > 0 ? actualPatterns : [`${tool} usage pattern`],
+            bestPractices: actualPractices.length > 0 ? actualPractices : [`${tool} used ${uniqueMessages.length}x successfully`],
           });
           usedTools.add(tool);
         }
@@ -1165,6 +1256,9 @@ export class HistorySearchEngine {
                 realDuration = Math.round((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000);
               }
               
+              // Extract accomplishments - what was actually done
+              const accomplishments = this.extractSessionAccomplishments(messages);
+
               return {
                 session_id: file.replace('.jsonl', ''),
                 project_path: decodedPath,
@@ -1177,7 +1271,8 @@ export class HistorySearchEngine {
                 tools_used: toolsUsed.slice(0, 5), // Limit tools for speed
                 assistant_count: messages.filter(m => m.type === 'assistant').length,
                 error_count: messages.filter(m => m.context?.errorPatterns?.length).length,
-                session_quality: this.calculateSessionQuality(messages, toolsUsed, [])
+                session_quality: this.calculateSessionQuality(messages, toolsUsed, []),
+                accomplishments: accomplishments.slice(0, 3) // Top 3 accomplishments
               };
             })
           );
@@ -1216,6 +1311,87 @@ export class HistorySearchEngine {
     return 'poor';
   }
 
+  // Extract accomplishments from session messages - what was actually done
+  private extractSessionAccomplishments(messages: CompactMessage[]): string[] {
+    const accomplishments: string[] = [];
+
+    for (const msg of messages) {
+      if (msg.type !== 'assistant') continue;
+      const content = msg.content;
+
+      // Git commits - multiple formats
+      const commitMatch1 = content.match(/git commit -m\s*["']([^"']{10,80})["']/i);
+      if (commitMatch1) {
+        accomplishments.push(`Committed: ${commitMatch1[1]}`);
+        continue;
+      }
+
+      const commitMatch2 = content.match(/committed:?\s*["']?([^"'\n]{10,60})["']?/i);
+      if (commitMatch2) {
+        accomplishments.push(`Committed: ${commitMatch2[1]}`);
+        continue;
+      }
+
+      // Test outcomes - expanded patterns
+      const testCountMatch = content.match(/(\d+)\s*tests?\s*passed/i);
+      if (testCountMatch) {
+        accomplishments.push(`${testCountMatch[1]} tests passed`);
+        continue;
+      }
+
+      const allTestsMatch = content.match(/all\s*tests?\s*(?:passed|succeeded)/i);
+      if (allTestsMatch) {
+        accomplishments.push('All tests passed');
+        continue;
+      }
+
+      // Build outcomes - expanded patterns
+      const buildSuccessMatch = content.match(/build\s*(?:succeeded|completed)/i);
+      if (buildSuccessMatch) {
+        accomplishments.push('Build succeeded');
+        continue;
+      }
+
+      const compileSuccessMatch = content.match(/(?:compiled|built)\s*successfully/i);
+      if (compileSuccessMatch) {
+        accomplishments.push('Built successfully');
+        continue;
+      }
+
+      // Explicit accomplishments - expanded patterns
+      const accomplishMatch = content.match(/(?:completed|implemented|fixed|created|built|added):?\s*([^.\n]{10,80})/i);
+      if (accomplishMatch) {
+        accomplishments.push(accomplishMatch[1].trim());
+        continue;
+      }
+
+      const summaryMatch = content.match(/(?:here's what we accomplished|accomplishments):?\s*([^.\n]{10,100})/i);
+      if (summaryMatch) {
+        accomplishments.push(summaryMatch[1].trim());
+        continue;
+      }
+
+      // Look for tool usage - Edit tool with file paths
+      const editMatch = content.match(/Edit.*?file_path.*?["']([^"']+\.\w{1,5})["']/);
+      if (editMatch) {
+        const filename = editMatch[1].split('/').pop() || editMatch[1];
+        accomplishments.push(`Edited: ${filename}`);
+        continue;
+      }
+
+      // Look for Write tool usage
+      const writeMatch = content.match(/Write.*?file_path.*?["']([^"']+\.\w{1,5})["']/);
+      if (writeMatch) {
+        const filename = writeMatch[1].split('/').pop() || writeMatch[1];
+        accomplishments.push(`Created: ${filename}`);
+        continue;
+      }
+    }
+
+    // Deduplicate and return top 3
+    return [...new Set(accomplishments)].slice(0, 3);
+  }
+
   async getSessionMessages(encodedProjectDir: string, sessionId: string): Promise<any[]> {
     try {
       // Direct access to specific session file
@@ -1231,7 +1407,7 @@ export class HistorySearchEngine {
 
   private isLowValueContent(content: string): boolean {
     const lowerContent = content.toLowerCase();
-    
+
     // Filter out only genuinely useless content - be conservative
     const lowValuePatterns = [
       'local-command-stdout>(no content)',
@@ -1242,9 +1418,119 @@ export class HistorySearchEngine {
       /^error:\s*$/,
       /^warning:\s*$/
     ];
-    
-    return lowValuePatterns.some(pattern => 
+
+    return lowValuePatterns.some(pattern =>
       typeof pattern === 'string' ? lowerContent.includes(pattern) : pattern.test(lowerContent)
     ) || content.trim().length < 20;
+  }
+
+  // Helper to detect if content contains actual error (not just meta-discussion about errors)
+  private isActualError(content: string): boolean {
+    const errorIndicators = [
+      /error[:\s]/i,           // "error:" or "error "
+      /exception[:\s]/i,       // "exception:" or "exception "
+      /failed/i,               // any "failed" message
+      /\w+Error/i,             // TypeError, SyntaxError, etc.
+      /cannot\s+/i,            // "cannot read", "cannot find"
+      /undefined\s+is\s+not/i, // common JS error
+      /not\s+found/i,          // module not found, file not found
+      /invalid/i,              // invalid argument, invalid syntax
+      /stack trace/i,          // stack trace
+      /at\s+\w+\s+\([^)]+:\d+:\d+\)/ // Stack trace line
+    ];
+    return errorIndicators.some(pattern => pattern.test(content));
+  }
+
+  // Filter meta-content about errors (detects plans/discussions vs actual solutions)
+  private isMetaErrorContent(content: string): boolean {
+    const metaIndicators = [
+      /\d+\/\d+.*(?:pass|fail|queries|results)/i,  // Score patterns like "2/3 pass"
+      /(?:test|benchmark|verify).*(?:error|solution)/i,  // Testing discussions
+      /(?:plan|design|implement).*(?:error handling|solution)/i,  // Planning discussions
+      /root\s+cause.*:/i,         // Analysis text
+      /(?:⚠️|✅|❌|🔴|🟢)/,       // Status emojis (any documentation/planning)
+      /\|\s*(?:tool|status|issue)/i,  // Markdown tables about tools/status
+    ];
+    return metaIndicators.some(p => p.test(content));
+  }
+
+  // Extract actual tool patterns from message content
+  private extractActualToolPatterns(toolName: string, messages: CompactMessage[]): string[] {
+    const patterns: string[] = [];
+
+    for (const msg of messages.slice(0, 25)) {
+      // PRIMARY: Extract from context (set by parser from tool_use structure)
+      if (msg.context?.filesReferenced?.length) {
+        for (const file of msg.context.filesReferenced.slice(0, 3)) {
+          const filename = file.split('/').pop() || file;
+          if (toolName === 'Edit' || toolName === 'Write' || toolName === 'Read') {
+            patterns.push(`${toolName}: ${filename}`);
+          }
+        }
+      }
+
+      const content = msg.content;
+
+      // SECONDARY: Look for tool usage descriptions in content
+      const toolMentionMatch = content.match(new RegExp(
+        `(?:use|using|called?)\\s+(?:the\\s+)?${toolName}(?:\\s+tool)?\\s+(?:to|on|for)\\s+([^.\\n]{10,60})`, 'i'
+      ));
+      if (toolMentionMatch) {
+        patterns.push(`${toolName}: ${toolMentionMatch[1].trim()}`);
+      }
+
+      // BASH-specific: Extract actual commands from code blocks
+      if (toolName === 'Bash') {
+        const bashCodeMatch = content.match(/```(?:bash|sh|shell|)\n(.{5,80})\n/);
+        if (bashCodeMatch) {
+          patterns.push(`$ ${bashCodeMatch[1].substring(0, 60)}`);
+        }
+      }
+    }
+
+    // Return unique patterns, limit to 10
+    return [...new Set(patterns)].slice(0, 10);
+  }
+
+  // Extract actual best practices from usage patterns for Issue #47
+  private extractActualBestPractices(toolName: string, messages: CompactMessage[]): string[] {
+    const practices: string[] = [];
+    const fileTypes = new Set<string>();
+    let successCount = 0;
+
+    for (const msg of messages) {
+      // Count successes (no error patterns)
+      if (!msg.context?.errorPatterns?.length) {
+        successCount++;
+      }
+
+      // Extract file types
+      msg.context?.filesReferenced?.forEach(file => {
+        const ext = file.match(/\.(\w+)$/)?.[1];
+        if (ext) fileTypes.add(ext);
+      });
+    }
+
+    // Generate practices based on actual usage
+    if (fileTypes.size > 0) {
+      const types = Array.from(fileTypes).slice(0, 5).join(', ');
+      practices.push(`Used with: ${types} files`);
+    }
+
+    if (successCount > 0) {
+      const successRate = Math.round((successCount / messages.length) * 100);
+      practices.push(`${successRate}% success rate (${successCount}/${messages.length} uses)`);
+    }
+
+    // Tool-specific practices
+    if (toolName === 'Edit' && messages.length > 5) {
+      practices.push('Frequent file modifications - consider atomic changes');
+    } else if (toolName === 'Bash' && messages.length > 3) {
+      practices.push('Multiple command executions - verify error handling');
+    } else if (toolName === 'Read' && messages.length > 10) {
+      practices.push('Heavy file reading - consider caching');
+    }
+
+    return practices.slice(0, 5);
   }
 }

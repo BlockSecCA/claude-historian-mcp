@@ -243,36 +243,27 @@ export class BeautifulFormatter {
   // MCP Tool Operation Formatters
 
   formatSearchConversations(result: SearchResult, _detailLevel: string = 'summary'): string {
-    let output = `Search: "${result.searchQuery}"\n\n`;
-    
+    const header = `${robots.search} "${result.searchQuery}" | ${result.messages.length} results`;
+
     if (result.messages.length === 0) {
-      return output + 'No messages found matching your query.\n';
+      return `${header}\n\n{"results":[]}`;
     }
 
-    // REVOLUTIONARY: Smart deduplication and relevance ranking
     const rankedMessages = this.rankAndDeduplicateMessages(result.messages);
-    const topMessages = rankedMessages.slice(0, Math.min(result.messages.length, 8)); // Cap for token efficiency
+    const topMessages = rankedMessages.slice(0, 8);
 
-    output += `Found ${result.totalResults} messages, showing ${topMessages.length} highest-value:\n\n`;
+    const structured = {
+      results: topMessages.map(msg => ({
+        type: msg.type,
+        ts: this.formatTimestamp(msg.timestamp),
+        content: msg.content,
+        project: msg.projectPath?.split('/').pop() || null,
+        score: msg.relevanceScore || msg.score || null,
+        ctx: msg.context || null
+      }))
+    };
 
-    topMessages.forEach((message, index) => {
-      const timestamp = this.formatTimestamp(message.timestamp);
-      const messageType = message.type.toUpperCase();
-      const content = this.extractHighValueContent(message.content);
-
-      output += `${index + 1}. ${messageType} ${timestamp}\n`;
-      output += `   ${content}\n`;
-
-      // Intelligent context aggregation
-      const context = this.aggregateContext(message);
-      if (context) {
-        output += `   ${context}\n`;
-      }
-
-      output += '\n';
-    });
-
-    return output.trim();
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private rankAndDeduplicateMessages(messages: any[]): any[] {
@@ -352,36 +343,27 @@ export class BeautifulFormatter {
   }
 
   formatSimilarQueries(queries: CompactMessage[], originalQuery: string, _detailLevel: string = 'summary'): string {
+    const header = `${robots.similar} "${originalQuery}" | ${queries.length} similar`;
+
     if (queries.length === 0) {
-      return 'No similar queries found.\n';
+      return `${header}\n\n{"similar":[]}`;
     }
 
-    // Optimize for Claude's context consumption - raw useful data
     const clusteredQueries = this.clusterBySemantic(queries, originalQuery);
     const highValueQueries = clusteredQueries.filter(q => q.relevanceScore && q.relevanceScore > 0.1);
 
-    let output = `Found ${highValueQueries.length} similar queries:\n\n`;
+    const structured = {
+      similar: highValueQueries.map(q => ({
+        question: q.content,
+        answer: q.context?.claudeInsights?.[0] || null,
+        ts: this.formatTimestamp(q.timestamp),
+        project: q.projectPath?.split('/').pop() || null,
+        score: q.relevanceScore || null,
+        ctx: q.context || null
+      }))
+    };
 
-    highValueQueries.forEach((query, index) => {
-      const timestamp = this.formatTimestamp(query.timestamp);
-      const score = query.relevanceScore ? ` (${query.relevanceScore.toFixed(1)})` : '';
-      const project = query.projectPath ? query.projectPath.split('/').pop() : 'unknown';
-      
-      // RAW COMPLETE CONTENT for Claude - no truncation of valuable data
-      output += `${index + 1}. ${timestamp}${score}: ${query.content}\n`;
-      output += `   Project: ${project}`;
-      
-      // Add valuable metadata for Claude's context
-      if (query.context?.toolsUsed?.length) {
-        output += ` | Tools: ${query.context.toolsUsed.join(', ')}`;
-      }
-      if (query.context?.filesReferenced?.length) {
-        output += ` | Files: ${query.context.filesReferenced.slice(0, 2).join(', ')}`;
-      }
-      output += '\n\n';
-    });
-
-    return output.trim();
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private clusterBySemantic(queries: CompactMessage[], originalQuery: string): CompactMessage[] {
@@ -410,54 +392,27 @@ export class BeautifulFormatter {
   }
 
   formatFileContext(contexts: FileContext[], filepath: string, _detailLevel: string = 'summary', _operationType: string = 'all'): string {
-    let output = `File context: ${filepath}\n\n`;
-    
+    const header = `${robots.fileContext} "${filepath}" | ${contexts.length} operations`;
+
     if (contexts.length === 0) {
-      return output + 'No file contexts found.\n';
+      return `${header}\n\n{"operations":[]}`;
     }
 
-    // CLAUDE-OPTIMIZED: Rich metadata and complete context for AI consumption
     const rankedContexts = this.rankFileContextsByImpact(contexts);
-    const topContexts = rankedContexts.slice(0, Math.min(contexts.length, 15)); // More results for Claude
+    const topContexts = rankedContexts.slice(0, 15);
 
-    output += `Found ${contexts.length} operations, showing ${topContexts.length} with complete context:\n\n`;
+    const structured = {
+      filepath,
+      operations: topContexts.map(ctx => ({
+        type: ctx.operationType,
+        ts: this.formatTimestamp(ctx.lastModified),
+        changes: this.extractFileChanges(ctx.relatedMessages, filepath),
+        content: ctx.relatedMessages[0]?.content || null,
+        ctx: ctx.relatedMessages[0]?.context || null
+      }))
+    };
 
-    topContexts.forEach((context, index) => {
-      const timestamp = this.formatTimestamp(context.lastModified);
-      const opType = context.operationType.toUpperCase();
-      
-      output += `${index + 1}. ${opType} ${timestamp} | File: ${filepath}\n`;
-
-      if (context.relatedMessages.length > 0) {
-        // CLAUDE-OPTIMIZED: Provide multiple messages for full context, not just "best" one
-        const topMessages = context.relatedMessages.slice(0, 3); // Show up to 3 messages for context
-        
-        topMessages.forEach((msg, msgIndex) => {
-          // RAW COMPLETE CONTENT for Claude - no truncation of valuable data
-          const content = msg.content.length > 500 ? msg.content : msg.content; // Keep complete content
-          output += `   Message ${msgIndex + 1}: ${content}\n`;
-          
-          // Add valuable metadata for Claude's context
-          if (msg.context?.toolsUsed?.length) {
-            output += `   Tools: ${msg.context.toolsUsed.join(', ')}\n`;
-          }
-          if (msg.context?.filesReferenced?.length) {
-            output += `   Files: ${msg.context.filesReferenced.slice(0, 3).join(', ')}\n`;
-          }
-          if (msg.context?.errorPatterns?.length) {
-            output += `   Errors: ${msg.context.errorPatterns.slice(0, 2).join(', ')}\n`;
-          }
-        });
-
-        if (context.relatedMessages.length > 3) {
-          output += `   (${context.relatedMessages.length - 3} additional messages available)\n`;
-        }
-      }
-
-      output += '\n';
-    });
-
-    return output.trim();
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private rankFileContextsByImpact(contexts: FileContext[]): FileContext[] {
@@ -493,61 +448,101 @@ export class BeautifulFormatter {
     return messages.reduce((best, current) => {
       const currentType = this.detectContentType(current.content);
       const bestType = this.detectContentType(best.content);
-      
+
       // Prioritize technical content
       if (currentType === 'code' && bestType !== 'code') return current;
       if (currentType === 'error' && bestType !== 'error' && bestType !== 'code') return current;
       if (currentType === 'technical' && bestType === 'conversational') return current;
-      
+
       // Prioritize longer, more detailed content
       if (current.content.length > best.content.length * 1.5) return current;
-      
+
       return best;
     });
   }
 
-  formatErrorSolutions(solutions: ErrorSolution[], errorPattern: string, _detailLevel: string = 'summary'): string {
-    let output = `Error solutions for: "${errorPattern}"\n\n`;
-    
-    if (solutions.length === 0) {
-      return output + 'No error solutions found.\n';
-    }
+  // Extract actual file changes from Edit tool usage
+  private extractFileChanges(messages: any[], filepath: string): string[] {
+    const changes: string[] = [];
+    const filename = filepath.split('/').pop() || filepath;
 
-    // CLAUDE-OPTIMIZED: Enhanced quality with speed and token efficiency
-    const rankedSolutions = this.rankErrorSolutions(solutions);
-    const topSolutions = rankedSolutions.slice(0, Math.min(solutions.length, 3)); // Focused on top results
+    for (const msg of messages) {
+      const content = msg.content;
 
-    output += `${solutions.length} solutions for "${errorPattern}":\n\n`;
-
-    topSolutions.forEach((solution, index) => {
-      output += `${index + 1}. ${solution.errorPattern} (${solution.frequency}x)\n`;
-
-      if (solution.solution.length > 0) {
-        // CLAUDE-OPTIMIZED: Best solution with essential metadata - quality + efficiency balance
-        const bestSolution = this.selectBestSolution(solution.solution);
-        
-        // Enhanced content extraction - preserve key technical details, remove fluff
-        const content = this.extractTechnicalEssence(bestSolution.content);
-        output += `   ${content}\n`;
-        
-        // Add essential metadata for Claude's context
-        if (bestSolution.context?.toolsUsed?.length) {
-          output += `   Tools: ${bestSolution.context.toolsUsed.slice(0, 2).join(', ')}\n`;
-        }
-        if (bestSolution.context?.filesReferenced?.length) {
-          output += `   Files: ${bestSolution.context.filesReferenced.slice(0, 2).join(', ')}\n`;
-        }
-        
-        // Show additional solutions count for context without bloating output
-        if (solution.solution.length > 1) {
-          output += `   (+${solution.solution.length - 1} more solutions)\n`;
-        }
+      // Look for Edit tool old_string → new_string patterns
+      const editMatch = content.match(/old_string.*?["']([^"']{10,100})["'].*?new_string.*?["']([^"']{10,100})["']/s);
+      if (editMatch) {
+        const oldStr = editMatch[1].substring(0, 50).replace(/\n/g, '\\n');
+        const newStr = editMatch[2].substring(0, 50).replace(/\n/g, '\\n');
+        changes.push(`Changed: "${oldStr}..." → "${newStr}..."`);
+        continue;
       }
 
-      output += '\n';
-    });
+      // Look for version bumps (common in package.json)
+      const versionMatch = content.match(/version.*?(\d+\.\d+\.\d+).*?(\d+\.\d+\.\d+)/i);
+      if (versionMatch && filepath.includes('package.json')) {
+        changes.push(`Version: ${versionMatch[1]} → ${versionMatch[2]}`);
+        continue;
+      }
 
-    return output.trim();
+      // Look for "added X", "removed X", "updated X" patterns
+      const actionMatch = content.match(/(?:added|removed|updated|created|deleted|renamed|fixed)\s+([^.!?\n]{5,60})/i);
+      if (actionMatch && content.toLowerCase().includes(filename.toLowerCase())) {
+        changes.push(actionMatch[0].trim());
+      }
+    }
+
+    return [...new Set(changes)].slice(0, 5);
+  }
+
+  // Extract a concise action summary from message content
+  private extractActionSummary(content: string, filepath: string): string {
+    const filename = filepath.split('/').pop() || filepath;
+
+    // Try to find the most relevant sentence about this file
+    const sentences = content.split(/[.!?\n]/).filter(s => s.trim().length > 10);
+    for (const sentence of sentences) {
+      if (sentence.toLowerCase().includes(filename.toLowerCase())) {
+        const clean = sentence.trim().substring(0, 120);
+        if (clean.length > 20) return clean;
+      }
+    }
+
+    // Fallback: first substantive sentence
+    const first = sentences.find(s => s.trim().length > 20);
+    return first ? first.trim().substring(0, 120) : 'File referenced in conversation';
+  }
+
+  formatErrorSolutions(solutions: ErrorSolution[], errorPattern: string, _detailLevel: string = 'summary'): string {
+    const header = `${robots.errorSolutions} "${errorPattern}" | ${solutions.length} solutions`;
+
+    if (solutions.length === 0) {
+      return `${header}\n\n{"solutions":[]}`;
+    }
+
+    const rankedSolutions = this.rankErrorSolutions(solutions);
+    const topSolutions = rankedSolutions.slice(0, 5);
+
+    const structured = {
+      error_pattern: errorPattern,
+      solutions: topSolutions.map(sol => {
+        // Include multiple fixes from all solutions, not just the first
+        const fixes = sol.solution.map(s => ({
+          content: s.content,
+          code: s.context?.codeSnippets || null,
+          files: s.context?.filesReferenced || null
+        }));
+
+        return {
+          pattern: sol.errorPattern,
+          frequency: sol.frequency,
+          fixes: fixes,
+          ctx: sol.solution[0]?.context || null
+        };
+      })
+    };
+
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private rankErrorSolutions(solutions: ErrorSolution[]): ErrorSolution[] {
@@ -588,41 +583,29 @@ export class BeautifulFormatter {
   }
 
   formatToolPatterns(patterns: ToolPattern[], toolName?: string, _patternType: string = 'tools'): string {
-    const toolFilter = toolName ? ` for "${toolName}"` : '';
-    let output = `Tool usage patterns${toolFilter}\n\n`;
-    
+    const filter = toolName ? `"${toolName}"` : 'all';
+    const header = `${robots.toolPatterns} ${filter} | ${patterns.length} patterns`;
+
     if (patterns.length === 0) {
-      return output + 'No tool patterns found.\n';
+      return `${header}\n\n{"patterns":[]}`;
     }
 
-    // REVOLUTIONARY: Usage frequency ranking and workflow intelligence
     const rankedPatterns = this.rankToolPatternsByValue(patterns);
-    const topPatterns = rankedPatterns.slice(0, Math.min(patterns.length, 8));
+    const topPatterns = rankedPatterns.slice(0, 8);
 
-    output += `Found ${patterns.length} patterns, showing ${topPatterns.length} highest-value (${Math.round((topPatterns.length/patterns.length)*100)}% success rate):\n\n`;
+    const structured = {
+      tool: toolName || 'all',
+      patterns: topPatterns.map(p => ({
+        name: p.toolName,
+        uses: p.successfulUsages.length,
+        workflow: p.commonPatterns[0] || null,
+        practice: p.bestPractices[0] || null,
+        example: p.successfulUsages[0]?.content || null,
+        ctx: p.successfulUsages[0]?.context || null
+      }))
+    };
 
-    topPatterns.forEach((pattern, index) => {
-      const successRate = pattern.successfulUsages.length;
-      const efficiency = this.calculateToolEfficiency(pattern);
-      
-      output += `${index + 1}. ${pattern.toolName} (${successRate} uses, ${efficiency}% efficiency)\n`;
-
-      // Extract most valuable pattern
-      if (pattern.commonPatterns.length > 0) {
-        const bestPattern = this.selectBestPattern(pattern.commonPatterns);
-        output += `   Pattern: ${bestPattern}\n`;
-      }
-
-      // Extract most actionable practice
-      if (pattern.bestPractices.length > 0) {
-        const bestPractice = this.selectBestPractice(pattern.bestPractices);
-        output += `   Best Practice: ${bestPractice}\n`;
-      }
-
-      output += '\n';
-    });
-
-    return output.trim();
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private rankToolPatternsByValue(patterns: ToolPattern[]): ToolPattern[] {
@@ -641,9 +624,17 @@ export class BeautifulFormatter {
         if (practice.length > 50) score += 5; // Detailed practices
       });
       
-      // Boost for workflow patterns
+      // Prioritize actual patterns (with file names, commands) over workflow patterns
       pattern.commonPatterns.forEach(p => {
-        if (/→/.test(p)) score += 15; // Tool chains
+        // Heavy boost for actual file/command patterns (not generic fallbacks)
+        if (!p.includes('usage pattern') && !p.includes('→') && p.includes(':')) {
+          score += 30; // Actual file-level patterns get highest priority
+        }
+        // Lower boost for workflow patterns (tool chains)
+        else if (/→/.test(p)) {
+          score += 5; // Workflows secondary to actual patterns
+        }
+        // Generic content patterns
         if (/(file|search|edit|build)/i.test(p)) score += 8;
       });
       
@@ -682,42 +673,29 @@ export class BeautifulFormatter {
   }
 
   formatRecentSessions(sessions: any[], project?: string): string {
-    let output = `Recent session analysis` + (project ? ` | Project: ${project}` : '') + '\n\n';
-    
+    const filter = project ? `"${project}"` : 'all';
+    const header = `${robots.sessions} ${filter} | ${sessions.length} sessions`;
+
     if (sessions.length === 0) {
-      return output + 'No recent sessions found.\n';
+      return `${header}\n\n{"sessions":[]}`;
     }
 
-    // REVOLUTIONARY: Activity scoring and productivity metrics
     const rankedSessions = this.rankSessionsByProductivity(sessions);
-    const topSessions = rankedSessions.slice(0, Math.min(sessions.length, 10));
+    const topSessions = rankedSessions.slice(0, 10);
 
-    output += `Found ${sessions.length} sessions, showing ${topSessions.length} most productive (${Math.round((topSessions.length/sessions.length)*100)}% activity):\n\n`;
+    const structured = {
+      sessions: topSessions.map(s => ({
+        id: s.session_id?.substring(0, 8) || null,
+        ts: this.formatTimestamp(s.end_time || s.start_time),
+        duration: s.duration_minutes || 0,
+        messages: s.message_count || 0,
+        project: s.project_path?.split('/').pop() || null,
+        tools: s.tools_used || null,
+        accomplishments: s.accomplishments || null
+      }))
+    };
 
-    topSessions.forEach((session, index) => {
-      const duration = session.duration_minutes ? `${session.duration_minutes}m` : '0m';
-      const timestamp = this.formatTimestamp(session.end_time || session.start_time);
-      const sessionId = session.session_id ? session.session_id.substring(0, 8) : 'unknown';
-      const productivity = this.calculateProductivityScore(session);
-
-      output += `${index + 1}. ${sessionId} ${timestamp}\n`;
-      output += `   ${session.message_count || 0} msgs (${duration}) | Productivity: ${productivity}%`;
-
-      if (session.project_path) {
-        const projectName = session.project_path.split('/').pop() || 'unknown';
-        output += ` | Project: ${projectName}`;
-      }
-
-      // Extract key tools used
-      const tools = this.extractSessionTools(session);
-      if (tools.length > 0) {
-        output += ` | Tools: ${tools.join(', ')}`;
-      }
-
-      output += '\n\n';
-    });
-
-    return output.trim();
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 
   private rankSessionsByProductivity(sessions: any[]): any[] {
@@ -768,33 +746,30 @@ export class BeautifulFormatter {
   }
 
   formatCompactSummary(sessions: any[], sessionId?: string): string {
-    let output = `${robots.summary} Session summary`;
-    
-    if (sessionId) {
-      output += ` for: ${sessionId}`;
-    }
-    
-    output += '\n\n';
-    
     if (sessions.length === 0) {
-      return output + 'No session information found.\n';
+      const filter = sessionId ? `"${sessionId}"` : 'latest';
+      return `${robots.summary} ${filter}\n\n{"session":null}`;
     }
 
-    const session = sessions[0];
-    const timestamp = this.formatTimestamp(session.end_time || session.start_time);
-    const duration = session.duration_minutes ? `${session.duration_minutes}m` : '0m';
-    const id = session.session_id ? session.session_id.substring(0, 8) : 'unknown';
+    const s = sessions[0];
+    // Create a useful header with project name and session info
+    const projectName = s.project_path?.split('/').pop() || 'unknown';
+    const shortId = s.session_id?.substring(0, 8) || sessionId?.substring(0, 8) || 'latest';
+    const header = `${robots.summary} extracting summary from ${projectName} (${shortId})`;
+    const structured = {
+      session: {
+        id: s.session_id?.substring(0, 8) || null,
+        ts: this.formatTimestamp(s.end_time || s.start_time),
+        duration: s.duration_minutes || 0,
+        messages: s.message_count || 0,
+        project: s.project_path?.split('/').pop() || null,
+        tools: s.tools_used || null,
+        files: s.files_modified || null,
+        accomplishments: s.accomplishments || null,
+        decisions: s.key_decisions || null
+      }
+    };
 
-    output += `Session: ${id}\n`;
-    output += `Duration: ${duration}\n`;
-    output += `Messages: ${session.message_count || 0}\n`;
-    output += `Last activity: ${timestamp}\n`;
-
-    if (session.project_path) {
-      const projectName = session.project_path.split('/').pop() || 'unknown';
-      output += `Project: ${projectName}\n`;
-    }
-
-    return output;
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
   }
 }

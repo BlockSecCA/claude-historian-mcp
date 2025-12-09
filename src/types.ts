@@ -36,8 +36,9 @@ export interface CompactMessage {
     filesReferenced?: string[];
     toolsUsed?: string[];
     errorPatterns?: string[];
+    bashCommands?: string[];    // Extracted bash commands from tool_use
     claudeInsights?: string[];  // Solutions, explanations from Claude
-    codeSnippets?: string[];    // Code blocks and snippets  
+    codeSnippets?: string[];    // Code blocks and snippets
     actionItems?: string[];     // Next steps and actions
   };
 }

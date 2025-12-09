@@ -1414,49 +1414,79 @@ export class UniversalHistorySearchEngine {
 
     // Get session data from Claude Code
     const allSessions = await this.claudeCodeEngine.getRecentSessions(20);
-    const sessionData = allSessions.find(s => 
-      s.session_id === sessionId || 
-      s.session_id.startsWith(sessionId) ||
-      sessionId.includes(s.session_id) ||
-      s.session_id.includes(sessionId.replace(/^.*\//, ''))
+
+    // Support "latest" keyword - resolve to most recent session
+    let resolvedSessionId = sessionId;
+    if (sessionId.toLowerCase() === 'latest') {
+      if (allSessions.length > 0) {
+        resolvedSessionId = allSessions[0].session_id;
+      } else {
+        return {
+          source: 'claude-code',
+          results: {
+            session_id: 'latest',
+            end_time: null,
+            start_time: null,
+            duration_minutes: 0,
+            message_count: 0,
+            project_path: null,
+            tools_used: [],
+            files_modified: [],
+            accomplishments: [],
+            key_decisions: []
+          } as any,
+          enhanced: false
+        };
+      }
+    }
+
+    const sessionData = allSessions.find(s =>
+      s.session_id === resolvedSessionId ||
+      s.session_id.startsWith(resolvedSessionId) ||
+      resolvedSessionId.includes(s.session_id) ||
+      s.session_id.includes(resolvedSessionId.replace(/^.*\//, ''))
     );
 
     if (!sessionData) {
       return {
         source: 'claude-code',
         results: {
-          sessionId,
-          summary: `No session found for ID: ${sessionId}`,
-          messageCount: 0,
-          focus: focus || 'all'
+          session_id: resolvedSessionId,
+          end_time: null,
+          start_time: null,
+          duration_minutes: 0,
+          message_count: 0,
+          project_path: null,
+          tools_used: [],
+          files_modified: [],
+          accomplishments: [],
+          key_decisions: []
         } as any,
         enhanced: false
       };
     }
 
     const messages = await this.claudeCodeEngine.getSessionMessages(sessionData.project_dir, sessionData.session_id);
-    const sessionMessages = messages.slice(0, maxMessages || 10);
+    const sessionMessages = messages.slice(0, maxMessages || 100); // Increased from 50 to 100 for better extraction
 
-    const summary = {
-      sessionId,
-      summary: this.generateSessionSummary(sessionMessages, focus || 'all'),
-      messageCount: sessionMessages.length,
-      focus: focus || 'all'
+    // Return rich session object with extracted content
+    const richSummary = {
+      session_id: sessionData.session_id,
+      end_time: sessionData.end_time,
+      start_time: sessionData.start_time,
+      duration_minutes: sessionData.duration_minutes || 0,
+      message_count: sessionMessages.length,
+      project_path: sessionData.project_path,
+      tools_used: this.extractToolsFromMessages(sessionMessages),
+      files_modified: this.extractFilesFromMessages(sessionMessages),
+      accomplishments: this.extractAccomplishmentsFromMessages(sessionMessages),
+      key_decisions: this.extractDecisionsFromMessages(sessionMessages)
     };
 
-    if (!this.claudeDesktopAvailable) {
-      return {
-        source: 'claude-code',
-        results: summary as any,
-        enhanced: false
-      };
-    }
-
-    // For summaries, Desktop could provide additional context in the future
     return {
       source: 'claude-code',
-      results: summary as any,
-      enhanced: this.claudeDesktopAvailable
+      results: richSummary as any,
+      enhanced: this.claudeDesktopAvailable === true
     };
   }
 
@@ -1465,7 +1495,7 @@ export class UniversalHistorySearchEngine {
       messageCount: messages.length,
       toolsUsed: new Set<string>(),
       filesReferenced: new Set<string>(),
-      outcomes: new Set<string>(),
+      accomplishments: new Set<string>(),
       errors: new Set<string>(),
       solutions: new Set<string>()
     };
@@ -1480,11 +1510,25 @@ export class UniversalHistorySearchEngine {
       });
 
       const content = msg.content.toLowerCase();
+      const fullContent = msg.content;
+
+      // Extract errors with more context
       if (content.includes('error') || content.includes('failed')) {
-        insights.errors.add(msg.content.substring(0, 100));
+        insights.errors.add(fullContent.substring(0, 200));
       }
-      if (content.includes('solution') || content.includes('fixed')) {
-        insights.solutions.add(msg.content.substring(0, 100));
+
+      // Extract solutions/fixes with more context
+      if (content.includes('solution') || content.includes('fixed') || content.includes('resolved')) {
+        insights.solutions.add(fullContent.substring(0, 200));
+      }
+
+      // Extract accomplishments - look for completion indicators
+      if (content.includes('completed') || content.includes('created') ||
+          content.includes('implemented') || content.includes('built') ||
+          content.includes('finished') || content.includes('committed')) {
+        // Extract a meaningful snippet
+        const snippet = fullContent.substring(0, 150);
+        insights.accomplishments.add(snippet);
       }
     });
 
@@ -1493,25 +1537,32 @@ export class UniversalHistorySearchEngine {
     switch (focus) {
       case 'solutions':
         if (insights.solutions.size > 0) {
-          summary += `**Solutions:** ${Array.from(insights.solutions).slice(0, 2).join(', ')}\n`;
+          summary += `**Solutions:** ${Array.from(insights.solutions).slice(0, 2).join('\n')}\n`;
         }
         break;
       case 'tools':
         if (insights.toolsUsed.size > 0) {
-          summary += `**Tools:** ${Array.from(insights.toolsUsed).slice(0, 4).join(', ')}\n`;
+          summary += `**Tools:** ${Array.from(insights.toolsUsed).slice(0, 5).join(', ')}\n`;
         }
         break;
       case 'files':
         if (insights.filesReferenced.size > 0) {
-          summary += `**Files:** ${Array.from(insights.filesReferenced).slice(0, 3).join(', ')}\n`;
+          summary += `**Files:** ${Array.from(insights.filesReferenced).slice(0, 5).join(', ')}\n`;
         }
         break;
       default:
+        // All focus - show tools, files, and accomplishments
         if (insights.toolsUsed.size > 0) {
-          summary += `**Tools:** ${Array.from(insights.toolsUsed).slice(0, 3).join(', ')}\n`;
+          summary += `**Tools:** ${Array.from(insights.toolsUsed).slice(0, 4).join(', ')}\n`;
         }
         if (insights.filesReferenced.size > 0) {
-          summary += `**Files:** ${Array.from(insights.filesReferenced).slice(0, 2).join(', ')}\n`;
+          summary += `**Files:** ${Array.from(insights.filesReferenced).slice(0, 3).join(', ')}\n`;
+        }
+        if (insights.accomplishments.size > 0) {
+          summary += `**Accomplishments:** ${Array.from(insights.accomplishments).slice(0, 2).join(' | ')}\n`;
+        }
+        if (insights.solutions.size > 0) {
+          summary += `**Solutions:** ${Array.from(insights.solutions).slice(0, 1).join('')}\n`;
         }
     }
 
@@ -1613,7 +1664,180 @@ export class UniversalHistorySearchEngine {
     if (content.length < 30) score -= 5;
     const nonWordMatches = content.match(/[^\w\s.,!?-]/g);
     if (nonWordMatches && nonWordMatches.length > content.length * 0.3) score -= 3;
-    
+
     return Math.max(0, score);
+  }
+
+  private extractToolsFromMessages(messages: any[]): string[] {
+    const tools = new Set<string>();
+    messages.forEach(msg => {
+      msg.context?.toolsUsed?.forEach((tool: string) => tools.add(tool));
+    });
+    return Array.from(tools).slice(0, 8);
+  }
+
+  private extractFilesFromMessages(messages: any[]): string[] {
+    const files = new Set<string>();
+    messages.forEach(msg => {
+      msg.context?.filesReferenced?.forEach((file: string) => {
+        const filename = file.split('/').pop() || file;
+        if (filename.length > 2) files.add(filename);
+      });
+    });
+    return Array.from(files).slice(0, 10);
+  }
+
+  // FIX 5: Extract accomplishments from messages - MINIMUM 15 chars, sentence validation
+  private extractAccomplishmentsFromMessages(messages: any[]): string[] {
+    const rawAccomplishments: string[] = [];
+
+    // Helper: Validate accomplishment is a coherent phrase (15+ chars, has at least 2 words)
+    const isValidAccomplishment = (text: string): boolean => {
+      const trimmed = text.trim();
+      if (trimmed.length < 15) return false;  // Minimum 15 chars
+      const words = trimmed.split(/\s+/).filter(w => w.length > 1);
+      if (words.length < 2) return false;  // At least 2 words
+      // Reject if it's just file paths or code fragments
+      if (/^[\/\.\w]+$/.test(trimmed)) return false;  // Just a path
+      if (/^[\*\`\#]+/.test(trimmed)) return false;  // Markdown artifacts
+      return true;
+    };
+
+    for (const msg of messages) {
+      if (msg.type !== 'assistant') continue;
+      const content = msg.content;
+
+      // Pattern 1: Tool completion statements ("I've used X tool to...")
+      const toolCompleteMatch = content.match(
+        /(?:I've|I have|Just|Successfully)\s+(?:used|called|ran|executed)\s+(?:the\s+)?(\w+)\s+tool\s+to\s+([^.]{15,100})/i
+      );
+      if (toolCompleteMatch) {
+        rawAccomplishments.push(`${toolCompleteMatch[1]}: ${toolCompleteMatch[2].trim()}`);
+      }
+
+      // Pattern 2: "Done:" or completion markers - 15+ char minimum
+      const doneMatch = content.match(/(?:Done|Complete|Finished)[:.!]\s*([^.\n]{15,100})/i);
+      if (doneMatch) {
+        rawAccomplishments.push(doneMatch[1].trim());
+      }
+
+      // Pattern 3: "Now X is..." completion statements - 15+ char combined
+      const nowIsMatch = content.match(/Now\s+(?:the\s+)?(\w+)\s+(?:is|are|has|have|works?)\s+([^.]{10,80})/i);
+      if (nowIsMatch && (nowIsMatch[1].length + nowIsMatch[2].length) > 12) {
+        rawAccomplishments.push(`${nowIsMatch[1]} ${nowIsMatch[2].trim()}`);
+      }
+
+      // Pattern 4: BROADER action verbs - 15+ char minimum
+      const actionMatch = content.match(
+        /(?:Made|Updated|Fixed|Changed|Created|Added|Removed|Refactored|Implemented|Resolved)\s+(?:the\s+)?([^.\n]{15,100})/i
+      );
+      if (actionMatch) {
+        rawAccomplishments.push(actionMatch[1].trim());
+      }
+
+      // Pattern 5: "The X now..." statements
+      const theNowMatch = content.match(/The\s+(\w+)\s+now\s+([^.]{10,80})/i);
+      if (theNowMatch && (theNowMatch[1].length + theNowMatch[2].length) > 12) {
+        rawAccomplishments.push(`${theNowMatch[1]} now ${theNowMatch[2].trim()}`);
+      }
+
+      // Git commits - multiple formats (commit messages are usually meaningful)
+      const commitMatch1 = content.match(/git commit -m\s*["']([^"']{10,80})["']/i);
+      if (commitMatch1) {
+        rawAccomplishments.push(`Committed: ${commitMatch1[1]}`);
+      }
+
+      const commitMatch2 = content.match(/committed:?\s*["']?([^"'\n]{10,60})["']?/i);
+      if (commitMatch2 && !commitMatch1) {
+        rawAccomplishments.push(`Committed: ${commitMatch2[1]}`);
+      }
+
+      // Expanded patterns for "I've completed", "Successfully", etc. - 15+ chars
+      const accomplishPattern1 = content.match(/(?:I've |I have |Successfully )(?:completed?|implemented?|fixed?|created?|added?|updated?|changed?):?\s*([^.\n]{15,100})/i);
+      if (accomplishPattern1) {
+        rawAccomplishments.push(accomplishPattern1[1].trim());
+      }
+
+      // Pattern for "completed the X" - 15+ chars
+      const accomplishPattern2 = content.match(/(?:completed?|implemented?|fixed?|created?|built?|added?|updated?)\s+(?:the\s+)?([^.\n]{15,100})/i);
+      if (accomplishPattern2) {
+        rawAccomplishments.push(accomplishPattern2[1].trim());
+      }
+
+      // Test outcomes (these are always meaningful)
+      const testCountMatch = content.match(/(\d+)\s*tests?\s*passed/i);
+      if (testCountMatch) {
+        rawAccomplishments.push(`${testCountMatch[1]} tests passed`);
+      }
+
+      const allTestsMatch = content.match(/all\s*tests?\s*(?:passed|succeeded)/i);
+      if (allTestsMatch) {
+        rawAccomplishments.push('All tests passed');
+      }
+
+      // Build outcomes (always meaningful)
+      const buildSuccessMatch = content.match(/build\s*(?:succeeded|completed|passed)/i);
+      if (buildSuccessMatch) {
+        rawAccomplishments.push('Build succeeded');
+      }
+
+      const compileSuccessMatch = content.match(/(?:compiled|built)\s*successfully/i);
+      if (compileSuccessMatch) {
+        rawAccomplishments.push('Built successfully');
+      }
+
+      // Tool-based fallback for ALL file-editing tools with actual file name
+      const fileTools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+      if (msg.context?.toolsUsed?.some((t: string) => fileTools.includes(t)) && msg.context?.filesReferenced?.length) {
+        const file = msg.context.filesReferenced[0].split('/').pop();
+        if (file && file.length > 3) {  // Skip short/invalid filenames
+          rawAccomplishments.push(`Modified ${file}`);
+        }
+      }
+    }
+
+    // Look at tool_result messages for success indicators
+    for (const msg of messages) {
+      if (msg.type === 'tool_result' && msg.content && msg.content.length > 20) {
+        if (msg.content.includes('✨ Done') || msg.content.includes('Successfully compiled')) {
+          rawAccomplishments.push('Build completed');
+        }
+        if (msg.content.match(/\d+\s+passing|\d+\s+passed|All tests passed/i)) {
+          rawAccomplishments.push('Tests passed');
+        }
+        // NEW: Extract from tool_result success messages
+        const successMatch = msg.content.match(/(?:successfully|completed|done|finished)[:\s]+([^.\n]{15,80})/i);
+        if (successMatch) {
+          rawAccomplishments.push(successMatch[1].trim());
+        }
+      }
+    }
+
+    // Filter and deduplicate - only keep valid accomplishments
+    const validAccomplishments = rawAccomplishments.filter(isValidAccomplishment);
+    return [...new Set(validAccomplishments)].slice(0, 8);
+  }
+
+  private extractDecisionsFromMessages(messages: any[]): string[] {
+    const decisions: string[] = [];
+    for (const msg of messages) {
+      if (msg.type !== 'assistant') continue;
+      const content = msg.content;
+
+      // Decision patterns
+      const decisionPatterns = [
+        /(?:decided to|chose to|will use|going with|approach is)[\s:]+([^.\n]{20,100})/gi,
+        /(?:best option|recommended|should use)[\s:]+([^.\n]{20,100})/gi,
+        /(?:because|the reason)[\s:]+([^.\n]{20,100})/gi
+      ];
+
+      for (const pattern of decisionPatterns) {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+          if (match[1]) decisions.push(match[1].trim());
+        }
+      }
+    }
+    return [...new Set(decisions)].slice(0, 3);
   }
 }
