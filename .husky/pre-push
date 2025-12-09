@@ -1,0 +1,18 @@
+echo "Running pre-push checks..."
+
+# Format check (fast)
+npm run format:check || { echo "Format check failed. Run: npm run format"; exit 1; }
+
+# Lint check
+npm run lint || { echo "Lint failed. Run: npm run lint:fix"; exit 1; }
+
+# Type check
+npm run type-check || { echo "Type check failed"; exit 1; }
+
+# Build verification
+npm run build || { echo "Build failed"; exit 1; }
+
+# Security audit (warn only, don't block)
+npm audit --audit-level=high || echo "Security vulnerabilities detected (non-blocking)"
+
+echo "All pre-push checks passed!"
