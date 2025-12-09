@@ -1,13 +1,15 @@
 name: Security
 
-on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  schedule:
-    # Run security check weekly on Mondays
-    - cron: '0 10 * * 1'
+# Disabled - manual for now
+# on:
+#   push:
+#     branches: [main, master]
+#   pull_request:
+#     branches: [main, master]
+#   schedule:
+#     # Run security check weekly on Mondays
+#     - cron: '0 10 * * 1'
+on: workflow_dispatch
 
 jobs:
   security:
