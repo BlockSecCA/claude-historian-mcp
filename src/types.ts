@@ -94,3 +94,19 @@ export interface ConversationSession {
   messageCount: number;
   summary?: string;
 }
+
+export interface PlanResult {
+  name: string;
+  filepath: string;
+  title: string | null;
+  content: string;
+  sections: string[];
+  filesMentioned: string[];
+  timestamp: string;
+  relevanceScore: number;
+}
+
+export interface PlanSearchResult {
+  searchQuery: string;
+  plans: PlanResult[];
+}

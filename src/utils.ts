@@ -8,6 +8,21 @@ export function getClaudeProjectsPath(): string {
   return join(homedir(), '.claude', 'projects');
 }
 
+export function getClaudePlansPath(): string {
+  return join(homedir(), '.claude', 'plans');
+}
+
+export async function findPlanFiles(): Promise<string[]> {
+  try {
+    const plansPath = getClaudePlansPath();
+    const entries = await readdir(plansPath);
+    return entries.filter((file) => file.endsWith('.md'));
+  } catch (error) {
+    console.error('Error finding plan files:', error);
+    return [];
+  }
+}
+
 export function decodeProjectPath(encodedPath: string): string {
   // Claude encodes paths by replacing '/' with '-'
   return encodedPath.replace(/-/g, '/');

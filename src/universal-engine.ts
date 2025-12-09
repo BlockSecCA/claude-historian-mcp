@@ -1,5 +1,5 @@
 import { HistorySearchEngine } from './search.js';
-import { SearchResult, FileContext, ErrorSolution, CompactMessage } from './types.js';
+import { SearchResult, FileContext, ErrorSolution, CompactMessage, PlanResult } from './types.js';
 import { detectClaudeDesktop, getClaudeDesktopStoragePath, getClaudeDesktopIndexedDBPath } from './utils.js';
 import { readdir, readFile, mkdtemp, copyFile, rm, chmod } from 'fs/promises';
 import { readFileSync, readdirSync } from 'fs';
@@ -1487,6 +1487,17 @@ export class UniversalHistorySearchEngine {
       source: 'claude-code',
       results: richSummary as any,
       enhanced: this.claudeDesktopAvailable === true
+    };
+  }
+
+  async searchPlans(query: string, limit?: number): Promise<{ source: string; results: PlanResult[]; enhanced: boolean }> {
+    // Plans are local to the machine, no Desktop integration needed
+    const plans = await this.claudeCodeEngine.searchPlans(query, limit || 10);
+
+    return {
+      source: 'claude-code',
+      results: plans,
+      enhanced: false
     };
   }
 

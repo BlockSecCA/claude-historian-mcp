@@ -1,5 +1,5 @@
 // Cool robot face formatter for Claude Historian MCP
-import { CompactMessage, SearchResult, FileContext, ErrorSolution, ToolPattern } from './types.js';
+import { CompactMessage, SearchResult, FileContext, ErrorSolution, ToolPattern, PlanResult, PlanSearchResult } from './types.js';
 
 // Robot faces for each MCP tool operation - these are the signature of Claude Historian!
 const robots = {
@@ -10,6 +10,7 @@ const robots = {
   toolPatterns: '[⌐⎚_⎚]', // find_tool_patterns
   sessions: '[⌐○_○]', // list_recent_sessions
   summary: '[⌐◉_◉]', // extract_compact_summary
+  plans: '[⌐▣_▣]', // search_plans
 };
 
 export class BeautifulFormatter {
@@ -771,5 +772,143 @@ export class BeautifulFormatter {
     };
 
     return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
+  }
+
+  formatPlanSearch(result: PlanSearchResult, _detailLevel: string = 'summary'): string {
+    const header = `${robots.plans} "${result.searchQuery}" | ${result.plans.length} plans`;
+
+    if (result.plans.length === 0) {
+      return `${header}\n\n{"plans":[]}`;
+    }
+
+    const topPlans = result.plans.slice(0, 10);
+
+    const structured = {
+      plans: topPlans.map(plan => ({
+        name: plan.name,
+        ts: this.formatTimestamp(plan.timestamp),
+        title: plan.title,
+        goal: this.extractPlanGoal(plan.content),
+        key_insight: this.extractKeyInsight(plan.content),
+        sections: plan.sections.slice(0, 6),
+        files: plan.filesMentioned.slice(0, 8),
+        score: plan.relevanceScore
+      }))
+    };
+
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
+  }
+
+  private extractPlanGoal(content: string): string | null {
+    // Try to extract meaningful goal/summary from plan content
+
+    // Pattern 1: ## Goal section
+    const goalMatch = content.match(/##\s*Goal\s*\n+([^\n#]{20,300})/i);
+    if (goalMatch) {
+      return goalMatch[1].trim().replace(/\s+/g, ' ');
+    }
+
+    // Pattern 2: ## Problem/Overview section
+    const problemMatch = content.match(/##\s*(?:Problem|Overview|Summary)\s*\n+([^\n#]{20,300})/i);
+    if (problemMatch) {
+      return problemMatch[1].trim().replace(/\s+/g, ' ');
+    }
+
+    // Pattern 3: First substantive paragraph after title
+    const paragraphs = content.split(/\n\n+/);
+    for (const para of paragraphs.slice(1, 5)) {
+      const cleaned = para.replace(/^#+\s*.*$/gm, '').trim();
+      if (cleaned.length > 30 && cleaned.length < 400 && !cleaned.startsWith('|') && !cleaned.startsWith('-')) {
+        return cleaned.replace(/\s+/g, ' ').substring(0, 300);
+      }
+    }
+
+    return null;
+  }
+
+  private extractKeyInsight(content: string): string | null {
+    // Extract the actionable insight - what was decided/fixed/implemented
+    // Priority: Fix/Solution > Approach > Implementation > Steps > Goal fallback
+
+    // Pattern 1: ## Fix or ## Solution section - get first line/bullet
+    const fixMatch = content.match(/##\s*(?:Fix|Solution|Resolution)\s*\n+(?:[-*]\s*)?([^\n]{15,200})/i);
+    if (fixMatch) {
+      const insight = this.cleanInsight(fixMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 2: ## Approach section - first sentence
+    const approachMatch = content.match(/##\s*(?:Approach|Strategy|Method)\s*\n+(?:[-*]\s*)?([^\n]{15,200})/i);
+    if (approachMatch) {
+      const insight = this.cleanInsight(approachMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 3: First bullet after ## Implementation that starts with capital
+    const implMatch = content.match(/##\s*Implementation[^\n]*\n+(?:[-*]\s*)?([A-Z][^\n]{15,200})/i);
+    if (implMatch) {
+      const insight = this.cleanInsight(implMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 4: Inline **Goal:** format (common in some plans)
+    const inlineGoalMatch = content.match(/\*\*Goal:\*\*\s*([^\n]{15,200})/i);
+    if (inlineGoalMatch) {
+      const insight = this.cleanInsight(inlineGoalMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 5: "The fix is" or "Solution:" inline
+    const inlineMatch = content.match(/(?:the fix is|solution:|approach:|key change:|key decision:)\s*([^\n]{15,200})/i);
+    if (inlineMatch) {
+      const insight = this.cleanInsight(inlineMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 6: First numbered step (1. Do X) - often more specific than goal
+    const numberedMatch = content.match(/\n1\.\s+\*?\*?([A-Z][^\n]{20,150})/);
+    if (numberedMatch) {
+      const insight = this.cleanInsight(numberedMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Pattern 7: First substantive bullet that describes an action
+    const actionBulletMatch = content.match(/\n[-*]\s+(?:Add|Create|Build|Implement|Fix|Update|Change|Remove|Enable|Configure|Use|Set)\s+([^\n]{15,150})/i);
+    if (actionBulletMatch) {
+      const insight = this.cleanInsight(actionBulletMatch[0].replace(/^[\n\-\*\s]+/, ''));
+      if (insight) return insight;
+    }
+
+    // Pattern 8: Any bullet point with ** emphasis (key items)
+    const emphasisBulletMatch = content.match(/\n[-*\d.]+\s+\*\*([^*]{10,100})\*\*/);
+    if (emphasisBulletMatch) {
+      const insight = this.cleanInsight(emphasisBulletMatch[1]);
+      if (insight) return insight;
+    }
+
+    // Fallback: Skip goal-derived insight (goal field already has this)
+    return null;
+  }
+
+  private cleanInsight(text: string): string | null {
+    // Clean up the insight text
+    let cleaned = text
+      .replace(/^\*\*|\*\*$/g, '') // Remove bold markers
+      .replace(/^`|`$/g, '')       // Remove inline code markers
+      .replace(/\*\*/g, '')        // Remove remaining bold markers
+      .replace(/\s+/g, ' ')        // Normalize whitespace
+      .trim();
+
+    // Reject patterns that are just file references or metadata
+    if (cleaned.match(/^\*?File:|^Location:|^Path:|^Line[s]?:/i)) {
+      return null;
+    }
+
+    // Cap at 150 chars
+    if (cleaned.length > 150) {
+      cleaned = cleaned.substring(0, 147) + '...';
+    }
+
+    return cleaned.length >= 15 ? cleaned : null;
   }
 }

@@ -1,11 +1,15 @@
 import { ConversationParser } from './parser.js';
-import { CompactMessage, SearchResult, FileContext, ErrorSolution, ToolPattern } from './types.js';
+import { CompactMessage, SearchResult, FileContext, ErrorSolution, ToolPattern, PlanResult } from './types.js';
 import {
   findProjectDirectories,
   findJsonlFiles,
   getTimeRangeFilter,
   extractContentFromMessage,
+  findPlanFiles,
+  getClaudePlansPath,
 } from './utils.js';
+import { readFile, stat } from 'fs/promises';
+import { join } from 'path';
 import { SearchHelpers } from './search-helpers.js';
 
 export class HistorySearchEngine {
@@ -1532,5 +1536,125 @@ export class HistorySearchEngine {
     }
 
     return practices.slice(0, 5);
+  }
+
+  async searchPlans(query: string, limit: number = 10): Promise<PlanResult[]> {
+    try {
+      const planFiles = await findPlanFiles();
+      const plansPath = getClaudePlansPath();
+
+      // Process all plan files in parallel
+      const planResults = await Promise.allSettled(
+        planFiles.map(async (filename) => {
+          const filepath = join(plansPath, filename);
+          const content = await readFile(filepath, 'utf-8');
+          const stats = await stat(filepath);
+
+          // Parse markdown structure
+          const title = this.extractPlanTitle(content);
+          const sections = this.extractPlanSections(content);
+          const filesMentioned = this.extractFileReferences(content);
+
+          // Calculate relevance score
+          const relevanceScore = this.calculatePlanRelevance(query, title, sections, content);
+
+          return {
+            name: filename.replace('.md', ''),
+            filepath,
+            title,
+            content: content.substring(0, 2000), // Limit content size
+            sections,
+            filesMentioned,
+            timestamp: stats.mtime.toISOString(),
+            relevanceScore,
+          };
+        })
+      );
+
+      // Collect successful results
+      const plans: PlanResult[] = [];
+      for (const result of planResults) {
+        if (result.status === 'fulfilled') {
+          plans.push(result.value);
+        }
+      }
+
+      // Filter by relevance and sort
+      return plans
+        .filter(p => p.relevanceScore > 0)
+        .sort((a, b) => b.relevanceScore - a.relevanceScore)
+        .slice(0, limit);
+    } catch (error) {
+      console.error('Plan search error:', error);
+      return [];
+    }
+  }
+
+  private extractPlanTitle(content: string): string | null {
+    // Extract first H1 heading
+    const match = content.match(/^#\s+(.+)$/m);
+    return match ? match[1].trim() : null;
+  }
+
+  private extractPlanSections(content: string): string[] {
+    // Extract H2 headings
+    const matches = content.matchAll(/^##\s+(.+)$/gm);
+    return Array.from(matches, m => m[1].trim());
+  }
+
+  private extractFileReferences(content: string): string[] {
+    const filePatterns = [
+      /[\w\-./]+\.(ts|js|json|md|py|tsx|jsx|css|scss|html|yml|yaml|toml|sh)/g,
+      /`([^`]+\.\w{1,5})`/g,
+      /src\/[\w\-./]+/g,
+    ];
+
+    const files = new Set<string>();
+    for (const pattern of filePatterns) {
+      const matches = content.matchAll(pattern);
+      for (const match of matches) {
+        const file = match[1] || match[0];
+        if (file && file.length > 2 && file.length < 100) {
+          files.add(file);
+        }
+      }
+    }
+
+    return Array.from(files).slice(0, 20);
+  }
+
+  private calculatePlanRelevance(query: string, title: string | null, sections: string[], content: string): number {
+    const lowerQuery = query.toLowerCase();
+    const queryTerms = lowerQuery.split(/\s+/).filter(w => w.length > 2);
+
+    let score = 0;
+
+    // Title match (high weight)
+    if (title) {
+      const lowerTitle = title.toLowerCase();
+      if (lowerTitle.includes(lowerQuery)) score += 20;
+      for (const term of queryTerms) {
+        if (lowerTitle.includes(term)) score += 5;
+      }
+    }
+
+    // Section match (medium weight)
+    for (const section of sections) {
+      const lowerSection = section.toLowerCase();
+      if (lowerSection.includes(lowerQuery)) score += 10;
+      for (const term of queryTerms) {
+        if (lowerSection.includes(term)) score += 3;
+      }
+    }
+
+    // Content match (lower weight, but catches everything)
+    const lowerContent = content.toLowerCase();
+    if (lowerContent.includes(lowerQuery)) score += 8;
+    for (const term of queryTerms) {
+      const occurrences = (lowerContent.match(new RegExp(term, 'g')) || []).length;
+      score += Math.min(occurrences, 5); // Cap per-term contribution
+    }
+
+    return score;
   }
 }

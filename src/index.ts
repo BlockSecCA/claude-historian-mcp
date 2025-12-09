@@ -227,6 +227,31 @@ class ClaudeHistorianServer {
               },
             },
           },
+          {
+            name: 'search_plans',
+            description: 'Search Claude Code plan files for past implementation approaches, decisions, and patterns',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Search query for plan content',
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of results (default: 10)',
+                  default: 10,
+                },
+                detail_level: {
+                  type: 'string',
+                  description: 'Response detail level',
+                  enum: ['summary', 'detailed', 'raw'],
+                  default: 'summary',
+                },
+              },
+              required: ['query'],
+            },
+          },
         ],
       };
     });
@@ -332,6 +357,22 @@ class ClaudeHistorianServer {
 
             const patternType = (args?.pattern_type as string) || 'tools';
             const formattedResult = this.formatter.formatToolPatterns(universalResult.results as any, args?.tool_name as string, patternType);
+
+            return {
+              content: [{ type: 'text', text: formattedResult }],
+            };
+          }
+
+          case 'search_plans': {
+            const query = args?.query as string;
+            const limit = (args?.limit as number) || 10;
+            const detailLevel = (args?.detail_level as string) || 'summary';
+
+            const result = await this.universalEngine.searchPlans(query, limit);
+            const formattedResult = this.formatter.formatPlanSearch(
+              { searchQuery: query, plans: result.results },
+              detailLevel
+            );
 
             return {
               content: [{ type: 'text', text: formattedResult }],
