@@ -31,32 +31,39 @@ export class UniversalHistorySearchEngine {
   }
 
   private async detectLevelDB(): Promise<void> {
-    try {
-      const { Level } = await import('level');
-      this.levelDB = Level;
-      this.enhancedMode = true;
-      console.log('✅ Level package detected - Enhanced Desktop mode available');
-    } catch (e) {
-      // Try SQLite instead
-      try {
-        const sqlite3Module = await import('better-sqlite3');
-        this.sqlite3 = sqlite3Module.default;
-        this.enhancedMode = true;
-        console.log('✅ SQLite package detected - Enhanced Desktop mode available');
-      } catch (sqliteError) {
-        console.log('📁 No database packages available - Claude Code only mode');
-      }
-    }
+    // Desktop support disabled - conversations are stored server-side
+    // See: https://github.com/Vvkmnn/claude-historian-mcp/issues/70
+    this.enhancedMode = false;
+    // try {
+    //   const { Level } = await import('level');
+    //   this.levelDB = Level;
+    //   this.enhancedMode = true;
+    //   console.log('✅ Level package detected - Enhanced Desktop mode available');
+    // } catch (e) {
+    //   // Try SQLite instead
+    //   try {
+    //     const sqlite3Module = await import('better-sqlite3');
+    //     this.sqlite3 = sqlite3Module.default;
+    //     this.enhancedMode = true;
+    //     console.log('✅ SQLite package detected - Enhanced Desktop mode available');
+    //   } catch (sqliteError) {
+    //     console.log('📁 No database packages available - Claude Code only mode');
+    //   }
+    // }
   }
 
   async initialize(): Promise<void> {
-    await this.detectLevelDB();
-    this.claudeDesktopAvailable = await detectClaudeDesktop();
-
-    if (this.claudeDesktopAvailable) {
-      this.desktopStoragePath = await getClaudeDesktopStoragePath();
-      this.desktopIndexedDBPath = await getClaudeDesktopIndexedDBPath();
-    }
+    // Desktop support disabled until server-side storage issue is resolved
+    // See: https://github.com/Vvkmnn/claude-historian-mcp/issues/70
+    this.claudeDesktopAvailable = false;
+    this.enhancedMode = false;
+    // await this.detectLevelDB();
+    // this.claudeDesktopAvailable = await detectClaudeDesktop();
+    //
+    // if (this.claudeDesktopAvailable) {
+    //   this.desktopStoragePath = await getClaudeDesktopStoragePath();
+    //   this.desktopIndexedDBPath = await getClaudeDesktopIndexedDBPath();
+    // }
   }
 
   async searchConversations(

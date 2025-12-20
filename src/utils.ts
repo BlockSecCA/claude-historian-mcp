@@ -38,16 +38,18 @@ export async function findProjectDirectories(): Promise<string[]> {
     const projectsPath = getClaudeProjectsPath();
     const entries = await readdir(projectsPath);
 
-    const directories = [];
+    const dirsWithMtime: { dir: string; mtime: number }[] = [];
+
     for (const entry of entries) {
       const fullPath = join(projectsPath, entry);
       const stats = await stat(fullPath);
       if (stats.isDirectory()) {
-        directories.push(entry);
+        dirsWithMtime.push({ dir: entry, mtime: stats.mtimeMs });
       }
     }
 
-    return directories;
+    // Sort by mtime descending (most recent first) - fixes #70
+    return dirsWithMtime.sort((a, b) => b.mtime - a.mtime).map((d) => d.dir);
   } catch (error) {
     console.error('Error finding project directories:', error);
     return [];
@@ -59,8 +61,22 @@ export async function findJsonlFiles(projectDir: string): Promise<string[]> {
     const projectsPath = getClaudeProjectsPath();
     const fullPath = join(projectsPath, projectDir);
     const entries = await readdir(fullPath);
+    const jsonlFiles = entries.filter((file) => file.endsWith('.jsonl'));
 
-    return entries.filter((file) => file.endsWith('.jsonl'));
+    // Get mtime for each file and sort by most recent first - fixes #70
+    const filesWithStats = await Promise.all(
+      jsonlFiles.map(async (file) => {
+        try {
+          const filePath = join(fullPath, file);
+          const stats = await stat(filePath);
+          return { file, mtime: stats.mtimeMs };
+        } catch {
+          return { file, mtime: 0 };
+        }
+      })
+    );
+
+    return filesWithStats.sort((a, b) => b.mtime - a.mtime).map((f) => f.file);
   } catch (error) {
     console.error(`Error finding JSONL files in ${projectDir}:`, error);
     return [];

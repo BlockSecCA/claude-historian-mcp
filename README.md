@@ -2,7 +2,7 @@
 
 ![claude-historian-mcp](demo/demo.gif)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for searching your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (& [Claude Desktop](https://claude.ai/download)) conversation history. Find past solutions, track file changes, and learn from previous work.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for searching your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) conversation history. Find past solutions, track file changes, and learn from previous work.
 
 [![npm version](https://img.shields.io/npm/v/claude-historian-mcp.svg)](https://www.npmjs.com/package/claude-historian-mcp) [![GitHub stars](https://img.shields.io/github/stars/Vvkmnn/claude-historian-mcp?style=social)](https://github.com/Vvkmnn/claude-historian-mcp) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Vvkmnn/claude-historian-mcp?utm_source=oss&utm_medium=github&utm_campaign=Vvkmnn%2Fclaude-historian-mcp&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews) [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -371,9 +371,11 @@ Learn from examples:
 
 ## desktop
 
-Claude Desktop support is currently blocked by [LevelDB locks](https://github.com/Level/level#open) and [Electron sandboxing](https://www.electronjs.org/docs/latest/tutorial/sandbox). You will still search Claude Desktop from Claude Code, but **only when the Claude app is closed**.
+**Note:** Claude Desktop stores conversations server-side, not locally. The local LevelDB files (`~/Library/Application Support/Claude/`) contain only session tokens, UI preferences, and Intercom state - not conversation content. Claude Desktop support is also blocked by [LevelDB locks](https://github.com/Level/level#open) and [Electron sandboxing](https://www.electronjs.org/docs/latest/tutorial/sandbox).
 
-A DXT package and build is available for future compatibility; further investigations are ongoing. Feel free to test with it.
+This means **local history search for Claude Desktop is not currently possible**. This project focuses on **Claude Code**, which stores full conversation history locally in `~/.claude/projects/`.
+
+You may get some Claude Desktop from Claude Code, but **only when the Claude app is closed**. Furthermore A DXT package and build is available for future compatibility; further investigations are ongoing. Feel free to test with it.
 
 ## license
 
