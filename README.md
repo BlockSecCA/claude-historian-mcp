@@ -349,47 +349,54 @@ How [claude-historian](https://github.com/Vvkmnn/claude-historian-mcp) [works](h
 ```
 "docker auth" query
       |
-      ├─> Parallel Processing (search.ts:157): 15 projects × 10 files concurrently
+      ├─> Parallel Processing (search.ts:174): 15 projects × 10 files concurrently
       |   • Promise.allSettled for 6x speed improvement
       |   • Early termination when sufficient results found
       |   • Enhanced file coverage with comprehensive patterns
       |
-      ├─> Enhanced Classification (search.ts:582): implementation → boost tool workflows
+      ├─> Enhanced Classification (search.ts:642): implementation → boost tool workflows
       |   • Workflow detection for tool sequences (Edit → Read → Bash)
       |   • Semantic boundary preservation (never truncate mid-function)
       |   • Claude-optimized formatting with rich metadata
       |
-      ├─> Smart Ranking (search.ts:637):
-      |   • "Edit workflow (7x successful)" (2h ago) *****
-      |   • "Docker auth with context paths" (yesterday) ****
-      |   • "Container debugging patterns" (last week) ***
+      ├─> Smart Ranking (utils.ts:267):
+      |   ├─> Core Terms (scoring-constants.ts): "docker" +10, "auth" +10
+      |   ├─> Supporting Terms: context words +3 each
+      |   ├─> Tool Usage: Edit/Bash references +5
+      |   ├─> File References: paths/extensions +3
+      |   └─> Project Match: current project +5
+      |
+      ├─> Results sorted by composite score:
+      |   • "Edit workflow (7x successful)" (2h ago) ***** [score: 45]
+      |   • "Docker auth with context paths" (yesterday) **** [score: 38]
+      |   • "Container debugging patterns" (last week) *** [score: 22]
       |
       └─> Return Claude Code optimized results
 ```
 
 **Core optimizations:**
 
-- [parallel processing](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L157): `Promise.allSettled` for 6x speed improvement across projects and files
-- [workflow detection](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L1010): Captures tool sequences like "Edit → Read → Bash" patterns
-- [enhanced file matching](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L694): Comprehensive path variations with case-insensitive matching
+- [parallel processing](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L174): `Promise.allSettled` for 6x speed improvement across projects and files
+- [workflow detection](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L1122): Captures tool sequences like "Edit → Read → Bash" patterns
+- [enhanced file matching](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L793): Comprehensive path variations with case-insensitive matching
 - [intelligent deduplication](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search-helpers.ts#L40): Content-based deduplication preserving highest-scoring results
 - [intelligent truncation](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L46): Never truncates mid-function or mid-error
-- [Claude-optimized formatting](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L15): Rich metadata with technical content prioritization
+- [Claude-optimized formatting](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L26): Rich metadata with technical content prioritization
 
 **Search strategies:**
 
 - **[JSON streaming parser](https://en.wikipedia.org/wiki/JSON_streaming)** ([parseJsonlFile](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/parser.ts#L16)): Reads Claude Code conversation files on-demand without full deserialization
-- **[LRU caching](<https://en.wikipedia.org/wiki/Cache_replacement_policies#Least_recently_used_(LRU)>)** ([messageCache](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L13)): In-memory cache with intelligent eviction for frequently accessed conversations
-- **[TF-IDF inspired scoring](https://en.wikipedia.org/wiki/Tf%E2%80%93idf)** ([calculateRelevanceScore](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L637)): Term frequency scoring with document frequency weighting for relevance
-- **[Query classification](https://en.wikipedia.org/wiki/Text_classification)** ([classifyQueryType](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L582)): Naive Bayes-style classification (error/implementation/analysis/general) with adaptive limits
+- **[LRU caching](<https://en.wikipedia.org/wiki/Cache_replacement_policies#Least_recently_used_(LRU)>)** ([messageCache](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L27)): In-memory cache with intelligent eviction for frequently accessed conversations
+- **[TF-IDF inspired scoring](https://en.wikipedia.org/wiki/Tf%E2%80%93idf)** ([calculateRelevanceScore](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/utils.ts#L267)): Term frequency scoring with document frequency weighting for relevance
+- **[Query classification](https://en.wikipedia.org/wiki/Text_classification)** ([classifyQueryType](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L642)): Naive Bayes-style classification (error/implementation/analysis/general) with adaptive limits
 - **[Edit distance](https://en.wikipedia.org/wiki/Edit_distance)** ([calculateQuerySimilarity](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search-helpers.ts#L157)): Fuzzy matching for technical terms and typo tolerance
 - **[Exponential time decay](https://en.wikipedia.org/wiki/Exponential_decay)** (getTimeRangeFilter): Recent messages weighted higher with configurable half-life
-- **[Parallel file processing](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled)** ([getErrorSolutions](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L882)): Concurrent project scanning with early termination for 0.8s response times
-- **[Workflow pattern recognition](https://en.wikipedia.org/wiki/Sequential_pattern_mining)** ([getToolPatterns](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L1010)): Detects tool usage sequences and related workflows for learning
-- **[Enhanced file context](<https://en.wikipedia.org/wiki/Path_(computing)>)** ([findFileContext](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L694)): Multi-project search with comprehensive path matching
+- **[Parallel file processing](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled)** ([getErrorSolutions](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L985)): Concurrent project scanning with early termination for 0.8s response times
+- **[Workflow pattern recognition](https://en.wikipedia.org/wiki/Sequential_pattern_mining)** ([getToolPatterns](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L1122)): Detects tool usage sequences and related workflows for learning
+- **[Enhanced file context](<https://en.wikipedia.org/wiki/Path_(computing)>)** ([findFileContext](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L793)): Multi-project search with comprehensive path matching
 - **[Content-aware truncation](https://en.wikipedia.org/wiki/Text_segmentation)** ([smartTruncation](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L46)): Intelligent content boundaries over arbitrary character limits
-- **[Technical content prioritization](https://en.wikipedia.org/wiki/Information_extraction)** ([BeautifulFormatter](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L15)): Code blocks, errors, and file paths get full preservation
-- **[Query similarity clustering](https://en.wikipedia.org/wiki/Cluster_analysis)** ([findSimilarQueries](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L811)): Semantic expansion and pattern grouping for related questions
+- **[Technical content prioritization](https://en.wikipedia.org/wiki/Information_extraction)** ([BeautifulFormatter](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/formatter.ts#L26)): Code blocks, errors, and file paths get full preservation
+- **[Query similarity clustering](https://en.wikipedia.org/wiki/Cluster_analysis)** ([findSimilarQueries](https://github.com/Vvkmnn/claude-historian-mcp/blob/master/src/search.ts#L912)): Semantic expansion and pattern grouping for related questions
 
 **File access:**
 
@@ -401,7 +408,7 @@ How [claude-historian](https://github.com/Vvkmnn/claude-historian-mcp) [works](h
 
 See [PERF.md](./PERF.md) for benchmarks, optimization history, and quality scores.
 
-**Current (v1.0.4)**: 4.7/5 average score across 8 tools. Latest: fixed word matching bug eliminating false positives (e.g., "react" vs "ReAct"), +1.0 point search relevance improvement.
+**Current (v1.0.5)**: 4.7/5 average score across 10 tools. Latest: code refactoring for maintainability (271→80 lines), added search_config and search_tasks tools. Performance: ~0.9s per query, zero regressions.
 
 ## development
 
