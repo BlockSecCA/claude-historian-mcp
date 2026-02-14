@@ -16,7 +16,8 @@ demo/.claude/
 demo/*.cast
 
 # Local configuration
-.claude/
+.claude/*
+!.claude/skills/
 .mcp.json
 
 # Development documentation

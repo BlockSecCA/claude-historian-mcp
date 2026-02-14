@@ -12,6 +12,10 @@ export function getClaudePlansPath(): string {
   return join(homedir(), '.claude', 'plans');
 }
 
+export function getClaudeTasksPath(): string {
+  return join(homedir(), '.claude', 'tasks');
+}
+
 export async function findPlanFiles(): Promise<string[]> {
   try {
     const plansPath = getClaudePlansPath();
@@ -19,6 +23,121 @@ export async function findPlanFiles(): Promise<string[]> {
     return entries.filter((file) => file.endsWith('.md'));
   } catch (error) {
     console.error('Error finding plan files:', error);
+    return [];
+  }
+}
+
+export async function walkDirectory(dir: string): Promise<string[]> {
+  const results: string[] = [];
+
+  try {
+    const entries = await readdir(dir);
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry);
+      try {
+        const stats = await stat(fullPath);
+
+        if (stats.isDirectory()) {
+          const subFiles = await walkDirectory(fullPath);
+          results.push(...subFiles);
+        } else if (stats.isFile()) {
+          results.push(fullPath);
+        }
+      } catch {
+        // Skip files/dirs we can't access
+      }
+    }
+  } catch {
+    // Directory doesn't exist or not accessible
+  }
+
+  return results;
+}
+
+export async function findClaudeMarkdownFiles(): Promise<{ path: string; category: string }[]> {
+  try {
+    const results: { path: string; category: string }[] = [];
+    const claudeDir = join(homedir(), '.claude');
+
+    // Search global ~/.claude/ directory
+    const globalCategories = ['rules', 'skills', 'agents', 'plans'];
+    for (const category of globalCategories) {
+      const categoryPath = join(claudeDir, category);
+      try {
+        await access(categoryPath, constants.F_OK);
+        const files = await walkDirectory(categoryPath);
+        for (const file of files) {
+          if (file.endsWith('.md')) {
+            results.push({ path: file, category: `global-${category}` });
+          }
+        }
+      } catch {
+        // Category doesn't exist, skip
+      }
+    }
+
+    // Check for CLAUDE.md in ~/.claude/
+    const globalClaudeMd = join(claudeDir, 'CLAUDE.md');
+    try {
+      await access(globalClaudeMd, constants.F_OK);
+      results.push({ path: globalClaudeMd, category: 'global-claude-md' });
+    } catch {
+      // CLAUDE.md doesn't exist
+    }
+
+    // Search project .claude/ directories
+    const projectDirs = await findProjectDirectories();
+    for (const projectDir of projectDirs) {
+      const decodedPath = decodeProjectPath(projectDir);
+      const projectClaudeDir = join(decodedPath, '.claude');
+
+      try {
+        await access(projectClaudeDir, constants.F_OK);
+
+        // Search project categories
+        for (const category of globalCategories) {
+          const categoryPath = join(projectClaudeDir, category);
+          try {
+            await access(categoryPath, constants.F_OK);
+            const files = await walkDirectory(categoryPath);
+            for (const file of files) {
+              if (file.endsWith('.md')) {
+                results.push({ path: file, category: `project-${category}` });
+              }
+            }
+          } catch {
+            // Category doesn't exist in this project
+          }
+        }
+
+        // Check for CLAUDE.md in project
+        const projectClaudeMd = join(projectClaudeDir, 'CLAUDE.md');
+        try {
+          await access(projectClaudeMd, constants.F_OK);
+          results.push({ path: projectClaudeMd, category: 'project-claude-md' });
+        } catch {
+          // Project CLAUDE.md doesn't exist
+        }
+      } catch {
+        // Project doesn't have .claude directory
+      }
+    }
+
+    return results;
+  } catch (error) {
+    console.error('Error finding Claude markdown files:', error);
+    return [];
+  }
+}
+
+export async function findTaskFiles(): Promise<string[]> {
+  try {
+    const tasksPath = getClaudeTasksPath();
+    const files = await walkDirectory(tasksPath);
+    return files.filter((file) => file.endsWith('.json'));
+  } catch (error) {
+    console.error('Error finding task files:', error);
     return [];
   }
 }

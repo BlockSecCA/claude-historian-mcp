@@ -15,6 +15,8 @@ import {
   findPlanFiles,
   getClaudePlansPath,
   expandWorktreeProjects,
+  findClaudeMarkdownFiles,
+  findTaskFiles,
 } from './utils.js';
 import { readFile, stat } from 'fs/promises';
 import { join } from 'path';
@@ -1807,5 +1809,145 @@ export class HistorySearchEngine {
     }
 
     return score;
+  }
+
+  async searchConfig(query: string, limit: number = 10): Promise<SearchResult> {
+    const startTime = Date.now();
+
+    try {
+      const results: CompactMessage[] = [];
+      const configFiles = await findClaudeMarkdownFiles();
+      const lowerQuery = query.toLowerCase();
+      const queryTerms = lowerQuery.split(/\s+/).filter((w) => w.length > 2);
+
+      for (const { path, category } of configFiles) {
+        try {
+          const content = await readFile(path, 'utf-8');
+          const lowerContent = content.toLowerCase();
+
+          // Check if query matches content
+          let score = 0;
+
+          // Exact phrase match
+          if (lowerContent.includes(lowerQuery)) score += 15;
+
+          // Individual term matches
+          for (const term of queryTerms) {
+            const occurrences = (lowerContent.match(new RegExp(term, 'g')) || []).length;
+            score += Math.min(occurrences * 2, 10);
+          }
+
+          if (score > 0) {
+            const stats = await stat(path);
+            results.push({
+              uuid: `config-${path}`,
+              timestamp: stats.mtime.toISOString(),
+              type: 'assistant',
+              content: content.substring(0, 1000), // First 1000 chars for preview
+              sessionId: `config-${category}`,
+              projectPath: path,
+              relevanceScore: score,
+              context: {
+                filesReferenced: [path],
+              },
+            });
+          }
+        } catch {
+          // Skip files we can't read
+        }
+      }
+
+      // Sort by relevance and limit
+      const sortedResults = results
+        .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
+        .slice(0, limit);
+
+      return {
+        messages: sortedResults,
+        totalResults: results.length,
+        searchQuery: query,
+        executionTime: Date.now() - startTime,
+      };
+    } catch (error) {
+      console.error('Error searching config files:', error);
+      return {
+        messages: [],
+        totalResults: 0,
+        searchQuery: query,
+        executionTime: Date.now() - startTime,
+      };
+    }
+  }
+
+  async searchTasks(query: string, limit: number = 10): Promise<SearchResult> {
+    const startTime = Date.now();
+
+    try {
+      const results: CompactMessage[] = [];
+      const taskFiles = await findTaskFiles();
+      const lowerQuery = query.toLowerCase();
+      const queryTerms = lowerQuery.split(/\s+/).filter((w) => w.length > 2);
+
+      for (const filePath of taskFiles) {
+        try {
+          const content = await readFile(filePath, 'utf-8');
+          const task = JSON.parse(content);
+
+          // Each file is a single task object
+          const taskText = `${task.subject || ''} ${task.description || ''}`.toLowerCase();
+
+          let score = 0;
+
+          // Exact phrase match
+          if (taskText.includes(lowerQuery)) score += 12;
+
+          // Individual term matches
+          for (const term of queryTerms) {
+            if (taskText.includes(term)) score += 4;
+          }
+
+          // Boost for pending/active tasks
+          if (task.status === 'pending' || task.status === 'in_progress') score += 5;
+
+          if (score > 0) {
+            const stats = await stat(filePath);
+            results.push({
+              uuid: `task-${filePath}-${task.id}`,
+              timestamp: task.updatedAt || task.createdAt || stats.mtime.toISOString(),
+              type: 'assistant',
+              content: `[${task.status?.toUpperCase() || 'UNKNOWN'}] ${task.subject || 'Untitled'}\n${task.description || ''}`,
+              sessionId: 'task-management',
+              projectPath: filePath,
+              relevanceScore: score,
+              context: {
+                filesReferenced: [filePath],
+              },
+            });
+          }
+        } catch {
+          // Skip files we can't read or parse
+        }
+      }
+
+      // Sort by relevance and limit
+      const sortedResults = results
+        .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
+        .slice(0, limit);
+
+      return {
+        messages: sortedResults,
+        totalResults: results.length,
+        searchQuery: query,
+        executionTime: Date.now() - startTime,
+      };
+    } catch (error) {
+      console.error('Error searching task files:', error);
+      return {
+        messages: [],
+        totalResults: 0,
+        searchQuery: query,
+        executionTime: Date.now() - startTime,
+      };
+    }
   }
 }

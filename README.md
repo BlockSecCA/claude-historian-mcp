@@ -4,7 +4,7 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for searching your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) conversation history. Find past solutions, track file changes, and learn from previous work.
 
-[![npm version](https://img.shields.io/npm/v/claude-historian-mcp.svg)](https://www.npmjs.com/package/claude-historian-mcp) [![GitHub stars](https://img.shields.io/github/stars/Vvkmnn/claude-historian-mcp?style=social)](https://github.com/Vvkmnn/claude-historian-mcp) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Vvkmnn/claude-historian-mcp?utm_source=oss&utm_medium=github&utm_campaign=Vvkmnn%2Fclaude-historian-mcp&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews) [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/npm/v/claude-historian-mcp.svg)](https://www.npmjs.com/package/claude-historian-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Vvkmnn/claude-historian-mcp?utm_source=oss&utm_medium=github&utm_campaign=Vvkmnn%2Fclaude-historian-mcp&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews) [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#) [![GitHub stars](https://img.shields.io/github/stars/Vvkmnn/claude-historian-mcp?style=social)](https://github.com/Vvkmnn/claude-historian-mcp)
 
 ## install
 
@@ -49,6 +49,37 @@ npm install -g claude-historian-mcp
 ```
 
 > **📦 renamed:** This project was renamed from `claude-historian` to `claude-historian-mcp`. Existing users should update your install command and MCP config args to `claude-historian-mcp`.
+
+## skill
+
+Optionally, install the skill to teach Claude when to proactively use historian:
+
+```bash
+npx skills add Vvkmnn/claude-historian-mcp --skill claude-historian --global
+```
+
+This makes Claude automatically check your history before web searches, when encountering errors, or at session start. The MCP works without the skill, but the skill improves discoverability.
+
+## plugin
+
+For automatic history search with hooks and commands, install from the [claude-emporium](https://github.com/Vvkmnn/claude-agora) marketplace:
+
+```bash
+git clone https://github.com/Vvkmnn/claude-agora ~/.claude/plugins/claude-emporium
+```
+
+The **claude-historian** plugin provides:
+
+**Hooks** (targeted, zero overhead on success):
+
+- Before WebSearch/WebFetch → Check `find_similar_queries`
+- Before EnterPlanMode → Check `search_plans`
+- Before Task agents → Check `find_tool_patterns`
+- After Bash errors → Check `get_error_solutions`
+
+**Command:** `/historian-search <query>`
+
+Requires the MCP server installed first. See the emporium for other Claude Code plugins and MCPs.
 
 ## features
 
@@ -227,6 +258,57 @@ Search Claude Code plan files for past implementation approaches, decisions, and
     "project": "my-app",
     "summary": "OAuth2 implementation with refresh tokens...",
     "decisions": ["chose PKCE flow", "JWT for access tokens"]
+  }]
+}
+```
+
+#### `search_config`
+
+Search .claude configuration files (rules, skills, agents, CLAUDE.md) for guidance and patterns.
+
+```
+[⌐◈_◈] search_config query=<query>
+  > "What are my rules about minimalism and code quality?"
+  > "Find the systematic debugging skill documentation"
+  > "Search for test-driven development guidelines"
+```
+
+```json
+[⌐◈_◈] "verify everything" | 2 results
+
+{
+  "results": [{
+    "type": "assistant",
+    "ts": "1/31/2026",
+    "content": "# Verify Everything\n\n## Rule\nEvery claim must be anchored to evidence...",
+    "file": "/Users/v/.claude/rules/verify.md",
+    "category": "global-rules",
+    "score": 34
+  }]
+}
+```
+
+#### `search_tasks`
+
+Search task management data for pending, completed, and in-progress tasks.
+
+```
+[⌐◇_◇] search_tasks query=<query>
+  > "Find pending tasks related to documentation"
+  > "What tasks mention the authentication system?"
+  > "Search for in-progress refactoring tasks"
+```
+
+```json
+[⌐◇_◇] "documentation" | 3 results
+
+{
+  "results": [{
+    "type": "assistant",
+    "ts": "4h ago",
+    "content": "[PENDING] Update API documentation\nAdd missing endpoints and examples to the API docs",
+    "file": "/Users/v/.claude/tasks/abc123/5.json",
+    "score": 16
   }]
 }
 ```

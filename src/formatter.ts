@@ -19,6 +19,8 @@ const robots = {
   sessions: '[⌐○_○]', // list_recent_sessions
   summary: '[⌐◉_◉]', // extract_compact_summary
   plans: '[⌐▣_▣]', // search_plans
+  config: '[⌐◈_◈]', // search_config (rules, skills, agents, CLAUDE.md)
+  tasks: '[⌐◇_◇]', // search_tasks (task management files)
 };
 
 export class BeautifulFormatter {
@@ -289,6 +291,47 @@ export class BeautifulFormatter {
         project: msg.projectPath?.split('/').pop() || null,
         score: msg.relevanceScore || msg.score || null,
         ctx: msg.context || null,
+      })),
+    };
+
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
+  }
+
+  formatConfigSearch(result: SearchResult, _detailLevel: string = 'summary'): string {
+    const header = `${robots.config} "${result.searchQuery}" | ${result.messages.length} results`;
+
+    if (result.messages.length === 0) {
+      return `${header}\n\n{"results":[]}`;
+    }
+
+    const structured = {
+      results: result.messages.map((msg) => ({
+        type: msg.type,
+        ts: this.formatTimestamp(msg.timestamp),
+        content: msg.content,
+        file: msg.projectPath || null,
+        category: msg.sessionId?.replace('config-', '') || null,
+        score: msg.relevanceScore || null,
+      })),
+    };
+
+    return `${header}\n\n${JSON.stringify(structured, null, 2)}`;
+  }
+
+  formatTaskSearch(result: SearchResult, _detailLevel: string = 'summary'): string {
+    const header = `${robots.tasks} "${result.searchQuery}" | ${result.messages.length} results`;
+
+    if (result.messages.length === 0) {
+      return `${header}\n\n{"results":[]}`;
+    }
+
+    const structured = {
+      results: result.messages.map((msg) => ({
+        type: msg.type,
+        ts: this.formatTimestamp(msg.timestamp),
+        content: msg.content,
+        file: msg.projectPath || null,
+        score: msg.relevanceScore || null,
       })),
     };
 

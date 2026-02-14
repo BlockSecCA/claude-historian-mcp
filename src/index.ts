@@ -43,7 +43,8 @@ class ClaudeHistorianServer {
         tools: [
           {
             name: 'search_conversations',
-            description: 'Search through Claude Code conversation history with smart insights',
+            description:
+              'Search through Claude Code conversation history, .claude files (rules, skills, agents, plans, CLAUDE.md), and task management data with smart insights',
             inputSchema: {
               type: 'object',
               properties: {
@@ -76,7 +77,8 @@ class ClaudeHistorianServer {
           },
           {
             name: 'find_file_context',
-            description: 'Find all conversations and changes related to a specific file',
+            description:
+              'Find all conversations, .claude files, and task references related to a specific file',
             inputSchema: {
               type: 'object',
               properties: {
@@ -253,6 +255,58 @@ class ClaudeHistorianServer {
               required: ['query'],
             },
           },
+          {
+            name: 'search_config',
+            description:
+              'Search .claude configuration files (rules, skills, agents, plans, CLAUDE.md) for guidance and patterns',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Search query for config content',
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of results (default: 10)',
+                  default: 10,
+                },
+                detail_level: {
+                  type: 'string',
+                  description: 'Response detail level',
+                  enum: ['summary', 'detailed', 'raw'],
+                  default: 'summary',
+                },
+              },
+              required: ['query'],
+            },
+          },
+          {
+            name: 'search_tasks',
+            description:
+              'Search task management data for pending, completed, and in-progress tasks',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Search query for task content',
+                },
+                limit: {
+                  type: 'number',
+                  description: 'Maximum number of results (default: 10)',
+                  default: 10,
+                },
+                detail_level: {
+                  type: 'string',
+                  description: 'Response detail level',
+                  enum: ['summary', 'detailed', 'raw'],
+                  default: 'summary',
+                },
+              },
+              required: ['query'],
+            },
+          },
         ],
       };
     });
@@ -400,6 +454,32 @@ class ClaudeHistorianServer {
               { searchQuery: query, plans: result.results },
               detailLevel
             );
+
+            return {
+              content: [{ type: 'text', text: formattedResult }],
+            };
+          }
+
+          case 'search_config': {
+            const query = args?.query as string;
+            const limit = (args?.limit as number) || 10;
+            const detailLevel = (args?.detail_level as string) || 'summary';
+
+            const result = await this.searchEngine.searchConfig(query, limit);
+            const formattedResult = this.formatter.formatConfigSearch(result, detailLevel);
+
+            return {
+              content: [{ type: 'text', text: formattedResult }],
+            };
+          }
+
+          case 'search_tasks': {
+            const query = args?.query as string;
+            const limit = (args?.limit as number) || 10;
+            const detailLevel = (args?.detail_level as string) || 'summary';
+
+            const result = await this.searchEngine.searchTasks(query, limit);
+            const formattedResult = this.formatter.formatTaskSearch(result, detailLevel);
 
             return {
               content: [{ type: 'text', text: formattedResult }],
