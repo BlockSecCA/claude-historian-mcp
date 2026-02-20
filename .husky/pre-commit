@@ -1,19 +1,17 @@
-#!/bin/bash
 npx lint-staged
 
 # Secrets check (staged files only)
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 if [ -n "$STAGED_FILES" ]; then
-  SECRET_PATTERNS=(
-    'AKIA[0-9A-Z]{16}'
-    'ghp_[a-zA-Z0-9]{36}'
-    'sk-[a-zA-Z0-9]{48}'
-    'xox[baprs]-[0-9a-zA-Z-]+'
-    'BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY'
-  )
   for file in $STAGED_FILES; do
-    [[ "$file" == *.png || "$file" == *.jpg || "$file" == *.gif || "$file" == *.dxt ]] && continue
-    for pattern in "${SECRET_PATTERNS[@]}"; do
+    case "$file" in *.png|*.jpg|*.gif|*.dxt) continue ;; esac
+    for pattern in \
+      'AKIA[0-9A-Z]{16}' \
+      'ghp_[a-zA-Z0-9]{36}' \
+      'sk-[a-zA-Z0-9]{48}' \
+      'xox[baprs]-[0-9a-zA-Z-]+' \
+      'BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY'
+    do
       if git show ":$file" 2>/dev/null | grep -qE "$pattern"; then
         echo "Potential secret in $file"
         exit 1
