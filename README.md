@@ -1,5 +1,7 @@
 # claude-historian-mcp
 
+> **This is a fork** of [Vvkmnn/claude-historian-mcp](https://github.com/Vvkmnn/claude-historian-mcp) with fixes for scan limits, scoring bias, and garbled output. See [FORK.md](FORK.md) for details.
+
 ![claude-historian-mcp](demo/demo.gif)
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for searching your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) conversation history. Find past solutions, track file changes, and learn from previous work.
