@@ -21,6 +21,12 @@ import {
 import { readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { SearchHelpers } from './search-helpers.js';
+import {
+  MAX_PROJECTS_SEARCH,
+  MAX_FILES_PER_PROJECT_SEARCH,
+  MAX_PROJECTS_SESSIONS,
+  MAX_FILES_PER_PROJECT_SESSIONS,
+} from './scoring-constants.js';
 
 export class HistorySearchEngine {
   private parser: ConversationParser;
@@ -83,18 +89,9 @@ export class HistorySearchEngine {
     };
   }
 
-  private getSemanticBoosts(query: string): Record<string, number> {
-    const boosts: Record<string, number> = {};
-
-    // Technical content gets massive boosts
-    if (query.includes('error')) boosts.errorResolution = 3.0;
-    if (query.includes('implement')) boosts.implementation = 2.5;
-    if (query.includes('optimize')) boosts.optimization = 2.0;
-    if (query.includes('fix')) boosts.solutions = 2.8;
-    if (query.includes('file')) boosts.fileOperations = 2.0;
-    if (query.includes('tool')) boosts.toolUsage = 2.2;
-
-    return boosts;
+  private getSemanticBoosts(_query: string): Record<string, number> {
+    // Content-neutral: no tech-specific boosts. Relevance comes from term matching.
+    return {};
   }
 
   private async performOptimizedSearch(
@@ -124,7 +121,10 @@ export class HistorySearchEngine {
       }
 
       // Smart project selection - focus on most relevant projects first
-      const maxProjects = Math.min(expandedDirs.length, Math.max(8, Math.ceil(limit / 2)));
+      const maxProjects = Math.min(
+        expandedDirs.length,
+        Math.max(MAX_PROJECTS_SEARCH, Math.ceil(limit / 2))
+      );
       const targetDirs = projectFilter
         ? expandedDirs.filter((dir) => dir.includes(projectFilter))
         : expandedDirs.slice(0, maxProjects);
@@ -212,8 +212,11 @@ export class HistorySearchEngine {
     try {
       const jsonlFiles = await findJsonlFiles(projectDir);
 
-      // Process only most relevant files (max 4 per project)
-      const priorityFiles = jsonlFiles.slice(0, Math.min(4, jsonlFiles.length));
+      // Process most relevant files per project
+      const priorityFiles = jsonlFiles.slice(
+        0,
+        Math.min(MAX_FILES_PER_PROJECT_SEARCH, jsonlFiles.length)
+      );
 
       for (const file of priorityFiles) {
         const fileMessages = await this.processJsonlFile(projectDir, file, query, timeFilter);
@@ -248,7 +251,6 @@ export class HistorySearchEngine {
       'command-message>',
       'much better! now i can see',
       'package.js',
-      'export interface',
       // Claude system/intro messages that shouldn't match searches
       'you are claude code',
       'read-only mode',
@@ -797,16 +799,14 @@ export class HistorySearchEngine {
       const projectDirs = await findProjectDirectories();
       const expandedDirs = await expandWorktreeProjects(projectDirs);
 
-      // COMPREHENSIVE: Process more projects to match GLOBAL's reach
-      const limitedDirs = expandedDirs.slice(0, 15); // Increased significantly to match GLOBAL scope
+      const limitedDirs = expandedDirs.slice(0, MAX_PROJECTS_SEARCH);
 
       // PARALLEL PROCESSING: Process all projects concurrently
       const projectResults = await Promise.allSettled(
         limitedDirs.map(async (projectDir) => {
           const jsonlFiles = await findJsonlFiles(projectDir);
 
-          // COMPREHENSIVE: Process more files to match GLOBAL's reach
-          const limitedFiles = jsonlFiles.slice(0, 10); // Increased to match GLOBAL scope
+          const limitedFiles = jsonlFiles.slice(0, MAX_FILES_PER_PROJECT_SEARCH);
 
           const fileResults = await Promise.allSettled(
             limitedFiles.map(async (file) => {
@@ -916,14 +916,12 @@ export class HistorySearchEngine {
       const projectDirs = await findProjectDirectories();
       const expandedDirs = await expandWorktreeProjects(projectDirs);
 
-      // BALANCED: More projects for better coverage, early termination for speed
-      const limitedDirs = expandedDirs.slice(0, 8);
+      const limitedDirs = expandedDirs.slice(0, MAX_PROJECTS_SEARCH);
 
       for (const projectDir of limitedDirs) {
         const jsonlFiles = await findJsonlFiles(projectDir);
 
-        // BALANCED: More files per project for better context
-        const limitedFiles = jsonlFiles.slice(0, 5);
+        const limitedFiles = jsonlFiles.slice(0, MAX_FILES_PER_PROJECT_SEARCH);
 
         for (const file of limitedFiles) {
           const messages = await this.parser.parseJsonlFile(projectDir, file);
@@ -990,16 +988,14 @@ export class HistorySearchEngine {
       const projectDirs = await findProjectDirectories();
       const expandedDirs = await expandWorktreeProjects(projectDirs);
 
-      // BALANCED: More projects for better coverage, still much faster than sequential
-      const limitedDirs = expandedDirs.slice(0, 12); // Increased for better coverage
+      const limitedDirs = expandedDirs.slice(0, MAX_PROJECTS_SEARCH);
 
       // PARALLEL PROCESSING: Process all projects concurrently
       const projectResults = await Promise.allSettled(
         limitedDirs.map(async (projectDir) => {
           const jsonlFiles = await findJsonlFiles(projectDir);
 
-          // BALANCED: More files for better coverage
-          const limitedFiles = jsonlFiles.slice(0, 6);
+          const limitedFiles = jsonlFiles.slice(0, MAX_FILES_PER_PROJECT_SEARCH);
 
           const projectErrorMap = new Map<string, CompactMessage[]>();
 
@@ -1126,9 +1122,9 @@ export class HistorySearchEngine {
     try {
       const projectDirs = await findProjectDirectories();
       const expandedDirs = await expandWorktreeProjects(projectDirs);
-      const limitedDirs = expandedDirs.slice(0, 15);
+      const limitedDirs = expandedDirs.slice(0, MAX_PROJECTS_SEARCH);
 
-      // Focus on core Claude Code tools that GLOBAL would recognize
+      // Focus on core Claude Code tools
       const coreTools = new Set([
         'Edit',
         'Read',
@@ -1145,7 +1141,7 @@ export class HistorySearchEngine {
       const projectResults = await Promise.allSettled(
         limitedDirs.map(async (projectDir) => {
           const jsonlFiles = await findJsonlFiles(projectDir);
-          const limitedFiles = jsonlFiles.slice(0, 8);
+          const limitedFiles = jsonlFiles.slice(0, MAX_FILES_PER_PROJECT_SEARCH);
 
           const projectToolMap = new Map<string, CompactMessage[]>();
           const projectWorkflowMap = new Map<string, CompactMessage[]>();
@@ -1360,8 +1356,8 @@ export class HistorySearchEngine {
       const projectDirs = await findProjectDirectories();
       const expandedDirs = await expandWorktreeProjects(projectDirs);
 
-      // PERFORMANCE: Limit projects and use parallel processing like GLOBAL
-      const limitedDirs = expandedDirs.slice(0, 10); // Limit projects for speed
+      // PERFORMANCE: Limit projects and use parallel processing
+      const limitedDirs = expandedDirs.slice(0, MAX_PROJECTS_SESSIONS);
 
       // PARALLEL PROCESSING: Process projects concurrently
       const projectResults = await Promise.allSettled(
@@ -1371,7 +1367,7 @@ export class HistorySearchEngine {
           const projectName = decodedPath.split('/').pop() || 'unknown';
 
           // PERFORMANCE: Limit files per project and process in parallel
-          const limitedFiles = jsonlFiles.slice(0, 5); // Limit files for speed
+          const limitedFiles = jsonlFiles.slice(0, MAX_FILES_PER_PROJECT_SESSIONS);
 
           const sessionResults = await Promise.allSettled(
             limitedFiles.map(async (file) => {
@@ -1498,9 +1494,9 @@ export class HistorySearchEngine {
         continue;
       }
 
-      // Explicit accomplishments - expanded patterns
+      // Explicit accomplishments — require start of sentence or after newline
       const accomplishMatch = content.match(
-        /(?:completed|implemented|fixed|created|built|added):?\s*([^.\n]{10,80})/i
+        /(?:^|\n)\s*(?:completed|implemented|fixed|created|built|added):?\s+([^.\n]{10,80})/i
       );
       if (accomplishMatch) {
         accomplishments.push(accomplishMatch[1].trim());

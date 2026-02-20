@@ -223,7 +223,6 @@ export function extractContentFromMessage(message: any): string {
 }
 
 import {
-  EXACT_MATCH_SCORE,
   SUPPORTING_TERM_SCORE,
   WORD_MATCH_SCORE,
   EXACT_PHRASE_BONUS,
@@ -231,8 +230,7 @@ import {
   TOOL_USAGE_SCORE,
   FILE_REFERENCE_SCORE,
   PROJECT_MATCH_SCORE,
-  CORE_TECH_PATTERN,
-  GENERIC_TERMS,
+  STOP_WORDS,
 } from './scoring-constants.js';
 
 /**
@@ -265,14 +263,7 @@ function matchesTechTerm(content: string, term: string): boolean {
 }
 
 export function calculateRelevanceScore(message: any, query: string, projectPath?: string): number {
-  const coreScore = scoreCoreTerms(message, query);
-
-  // If core terms don't match, reject completely
-  if (coreScore < 0) {
-    return 0;
-  }
-
-  let score = coreScore;
+  let score = scoreCoreTerms(message, query);
   score += scoreSupportingTerms(message, query);
   score += scoreToolUsage(message);
   score += scoreFileReferences(message);
@@ -286,28 +277,12 @@ function scoreCoreTerms(message: any, query: string): number {
   const lowerContent = content.toLowerCase();
   const queryWords = lowerQuery.split(/\s+/).filter((w) => w.length > 2);
 
-  // Strict core terms: tech names from CORE_TECH_PATTERN that MUST match
-  const strictCoreTerms = queryWords.filter((w) => CORE_TECH_PATTERN.test(w));
-
-  let strictCoreMatches = 0;
   let score = 0;
+  let wordMatchCount = 0;
 
-  for (const term of strictCoreTerms) {
-    if (matchesTechTerm(content, term)) {
-      strictCoreMatches++;
-      score += EXACT_MATCH_SCORE;
-    }
-  }
-
-  // If query has strict tech terms but NONE match, reject completely
-  if (strictCoreTerms.length > 0 && strictCoreMatches === 0) {
-    return -1000; // Signal rejection to parent function
-  }
-
-  // Individual word scoring for non-core terms
-  let wordMatchCount = strictCoreMatches;
+  // All query words >2 chars scored equally
   for (const word of queryWords) {
-    if (!strictCoreTerms.includes(word) && matchesTechTerm(content, word)) {
+    if (matchesTechTerm(content, word)) {
       wordMatchCount++;
       score += WORD_MATCH_SCORE;
     }
@@ -331,10 +306,8 @@ function scoreSupportingTerms(message: any, query: string): number {
   const lowerQuery = query.toLowerCase();
   const queryWords = lowerQuery.split(/\s+/).filter((w) => w.length > 2);
 
-  // Supporting terms: 5+ char words that aren't core tech or generic
-  const supportingTerms = queryWords.filter(
-    (w) => !CORE_TECH_PATTERN.test(w) && !GENERIC_TERMS.has(w) && w.length >= 5
-  );
+  // Supporting terms: 5+ char words that aren't stop words
+  const supportingTerms = queryWords.filter((w) => !STOP_WORDS.has(w) && w.length >= 5);
 
   let score = 0;
   for (const term of supportingTerms) {
