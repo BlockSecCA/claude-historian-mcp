@@ -19,6 +19,16 @@ demo/*.cast
 .claude/*
 !.claude/skills/
 .mcp.json
+.githooks/
+
+# Sensitive files
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+secrets.json
+config.local.json
 
 # Development documentation
 CLAUDE.md

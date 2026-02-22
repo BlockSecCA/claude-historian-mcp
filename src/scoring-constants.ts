@@ -1,11 +1,11 @@
 // Scoring constants for Claude Code conversation relevance
 // These weights are tuned based on what makes conversations most useful for Claude
 
-// Scan limits — configurable caps for how many projects/files we search
-export const MAX_PROJECTS_SEARCH = 30;
-export const MAX_FILES_PER_PROJECT_SEARCH = 15;
-export const MAX_PROJECTS_SESSIONS = 30;
-export const MAX_FILES_PER_PROJECT_SESSIONS = 15;
+// Scan limits — tunable via env vars for machines with different history profiles
+export const MAX_PROJECTS_SEARCH = parseInt(process.env.HISTORIAN_MAX_PROJECTS || '30');
+export const MAX_FILES_PER_PROJECT_SEARCH = parseInt(process.env.HISTORIAN_MAX_FILES || '15');
+export const MAX_PROJECTS_SESSIONS = parseInt(process.env.HISTORIAN_MAX_PROJECTS || '30');
+export const MAX_FILES_PER_PROJECT_SESSIONS = parseInt(process.env.HISTORIAN_MAX_FILES || '15');
 
 // Core scoring weights
 export const EXACT_MATCH_SCORE = 10; // Exact tech term match (e.g., "react" query matches "React")

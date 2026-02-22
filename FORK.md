@@ -17,7 +17,27 @@ The search functions had low hardcoded caps on how many projects and files they'
 | `getToolPatterns` | 15 → 30 | 8 → 15 |
 | `findFileContext` | 15 → 30 | 10 → 15 |
 
-If you had more than ~10 projects, most of your history was invisible. Limits are now configurable constants in `scoring-constants.ts`.
+If you had more than ~10 projects, most of your history was invisible. Limits are now configurable constants in `scoring-constants.ts`, and tunable per-machine via environment variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HISTORIAN_MAX_PROJECTS` | 30 | Max projects to scan |
+| `HISTORIAN_MAX_FILES` | 15 | Max files per project |
+
+Set them in your MCP server config if the defaults cause latency on machines with large session histories:
+
+```json
+{
+  "claude-historian-mcp": {
+    "command": "node",
+    "args": ["/path/to/dist/index.js"],
+    "env": {
+      "HISTORIAN_MAX_PROJECTS": "10",
+      "HISTORIAN_MAX_FILES": "8"
+    }
+  }
+}
+```
 
 ### 2. Tech-biased scoring
 
