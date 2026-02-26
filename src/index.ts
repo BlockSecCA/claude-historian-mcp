@@ -504,21 +504,49 @@ class ClaudeHistorianServer {
     await this.server.connect(transport);
     console.error('Claude Historian MCP server running on stdio');
 
-    // Keep the process alive by listening for process signals
-    process.on('SIGINT', () => {
-      console.error('Received SIGINT, shutting down gracefully...');
-      process.exit(0);
-    });
+    // Graceful shutdown: close transport + server, then exit
+    let shuttingDown = false;
+    const shutdown = async (): Promise<void> => {
+      if (shuttingDown) return;
+      shuttingDown = true;
 
-    process.on('SIGTERM', () => {
-      console.error('Received SIGTERM, shutting down gracefully...');
+      // Safety timeout — force exit if close() hangs
+      const timer = setTimeout(() => process.exit(0), 2000);
+      timer.unref();
+
+      try {
+        await this.server.close();
+      } catch {
+        /* ignore — already shutting down */
+      }
+      try {
+        await transport.close();
+      } catch {
+        /* ignore — already shutting down */
+      }
       process.exit(0);
+    };
+
+    // Signals
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+    // Broken pipes — main cause of noisy crashes when Claude Code exits
+    process.stdin.on('error', shutdown);
+    process.stdout.on('error', shutdown);
+
+    // Catch-all safety net
+    process.on('uncaughtException', (err) => {
+      console.error('Uncaught exception:', err);
+      shutdown();
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error('Unhandled rejection:', reason);
+      shutdown();
     });
 
     // Keep the process alive indefinitely until killed
-    await new Promise<void>(() => {
-      // This promise never resolves, keeping the server running
-    });
+    await new Promise<void>(() => {});
   }
   private async generateSmartSummary(
     sessionId: string,
