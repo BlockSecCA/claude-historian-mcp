@@ -1,12 +1,12 @@
 # claude-historian-mcp
 
+[![Version](https://img.shields.io/badge/version-1.0.3-blue)](https://github.com/BlockSecCA/claude-historian-mcp) [![License](https://img.shields.io/github/license/BlockSecCA/claude-historian-mcp)](https://github.com/BlockSecCA/claude-historian-mcp/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![MCP](https://img.shields.io/badge/MCP-server-orange)](https://modelcontextprotocol.io/)
+
 > **This is a fork** of [Vvkmnn/claude-historian-mcp](https://github.com/Vvkmnn/claude-historian-mcp) with fixes for scan limits, scoring bias, and garbled output. See [FORK.md](FORK.md) for details.
 
 ![claude-historian-mcp](demo/demo.gif)
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for searching your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) conversation history. Find past solutions, track file changes, and learn from previous work.
-
-[![npm version](https://img.shields.io/npm/v/claude-historian-mcp.svg)](https://www.npmjs.com/package/claude-historian-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Vvkmnn/claude-historian-mcp?utm_source=oss&utm_medium=github&utm_campaign=Vvkmnn%2Fclaude-historian-mcp&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews) [![Claude](https://img.shields.io/badge/Claude-D97757?logo=claude&logoColor=fff)](#) [![GitHub stars](https://img.shields.io/github/stars/Vvkmnn/claude-historian-mcp?style=social)](https://github.com/Vvkmnn/claude-historian-mcp)
 
 ## install
 
